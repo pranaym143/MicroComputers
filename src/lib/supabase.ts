@@ -187,18 +187,23 @@ export function getLocalCertificates(): StudentCertificate[] {
   }
 }
 
-export function saveLocalCertificates(certs: StudentCertificate[]): void {
+export async function saveLocalCertificates(certs: StudentCertificate[]): Promise<void> {
   localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
   cachedLocalCertificates = certs;
 
-  // Push updates asynchronously to backend database JSON file to sync with other devices immediately
-  fetch('/api/certificates', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(certs),
-  }).catch(err => {
+  // Push updates to backend database file to sync with other devices immediately
+  try {
+    const res = await fetch('/api/certificates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(certs),
+    });
+    if (!res.ok) {
+      throw new Error(`Server responded with status ${res.status}`);
+    }
+  } catch (err) {
     console.error('Failed to sync certificates list to backend server:', err);
-  });
+  }
 }
 
 // Unified Certificate Service
@@ -210,6 +215,18 @@ export class CertificateService {
   ): Promise<StudentCertificate | null> {
     const cleanTicket = hallTicket.trim().toUpperCase();
     const cleanName = studentName?.trim().toLowerCase();
+
+    // 1. Try to sync latest list from the backend server first so new updates are loaded instantly
+    try {
+      const res = await fetch('/api/certificates');
+      if (res.ok) {
+        const certs = await res.json();
+        cachedLocalCertificates = certs;
+        localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
+      }
+    } catch (err) {
+      console.warn('Failed to pre-fetch latest certificates from server:', err);
+    }
 
     const client = getSupabaseClient();
     if (client) {
@@ -234,11 +251,11 @@ export class CertificateService {
         }
         return null;
       } catch (err) {
-        console.warn('Real Supabase query error, falling back to local database:', err);
+        console.warn('Real Supabase query error, falling back to server local database:', err);
       }
     }
 
-    // Fallback to local certificates
+    // Fallback to local certificates (which we just synced above!)
     const certs = getLocalCertificates();
     const found = certs.find(c => c.hall_ticket_number.toUpperCase() === cleanTicket);
     if (found) {
@@ -255,6 +272,19 @@ export class CertificateService {
 
   // Get all certificates (Admin dashboard)
   static async getAllCertificates(): Promise<StudentCertificate[]> {
+    // 1. Try to fetch the absolute latest certificates from the server first to update across all devices instantly
+    try {
+      const res = await fetch('/api/certificates');
+      if (res.ok) {
+        const certs = await res.json();
+        cachedLocalCertificates = certs;
+        localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
+        return certs;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch latest certificates list from server:', err);
+    }
+
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -283,15 +313,16 @@ export class CertificateService {
     if (client) {
       try {
         const config = getSavedSupabaseConfig()!;
+        // FIX: Must insert newCert which includes the ID, rather than cert which does not have it!
         const { data, error } = await client
           .from(config.tableName)
-          .insert([cert])
+          .insert([newCert])
           .select();
 
         if (error) throw error;
         if (data && data.length > 0) {
           const savedCert = data[0] as StudentCertificate;
-          // Sync with local storage
+          // Sync with local storage & server database
           const certs = getLocalCertificates();
           const existingIdx = certs.findIndex(c => c.id === savedCert.id || c.hall_ticket_number === savedCert.hall_ticket_number);
           if (existingIdx !== -1) {
@@ -299,17 +330,17 @@ export class CertificateService {
           } else {
             certs.push(savedCert);
           }
-          saveLocalCertificates(certs);
+          await saveLocalCertificates(certs);
           return savedCert;
         }
       } catch (err) {
-        console.warn('Real Supabase save error, falling back to local storage:', err);
+        console.warn('Real Supabase save error, falling back to local/server storage:', err);
       }
     }
 
     const certs = getLocalCertificates();
     certs.push(newCert);
-    saveLocalCertificates(certs);
+    await saveLocalCertificates(certs);
     return newCert;
   }
 
@@ -333,12 +364,12 @@ export class CertificateService {
           const idx = certs.findIndex(c => c.id === id);
           if (idx !== -1) {
             certs[idx] = savedCert;
-            saveLocalCertificates(certs);
+            await saveLocalCertificates(certs);
           }
           return savedCert;
         }
       } catch (err) {
-        console.warn('Real Supabase update error, falling back to local storage:', err);
+        console.warn('Real Supabase update error, falling back to local/server storage:', err);
       }
     }
 
@@ -347,7 +378,7 @@ export class CertificateService {
     if (idx !== -1) {
       const merged = { ...certs[idx], ...updated };
       certs[idx] = merged;
-      saveLocalCertificates(certs);
+      await saveLocalCertificates(certs);
       return merged;
     }
     return null;
@@ -366,21 +397,21 @@ export class CertificateService {
 
         if (error) throw error;
       } catch (err) {
-        console.warn('Real Supabase delete error, falling back to local storage:', err);
+        console.warn('Real Supabase delete error, falling back to local/server storage:', err);
       }
     }
 
-    // Always keep local storage in sync
+    // Always keep server and local storage in sync
     const certs = getLocalCertificates();
     const filtered = certs.filter(c => c.id !== id);
-    saveLocalCertificates(filtered);
+    await saveLocalCertificates(filtered);
     return true;
   }
 
   // Upload certificate file (returns URL of uploaded file)
   static async uploadCertificateFile(file: File): Promise<{ url: string; fileName: string }> {
     const client = getSupabaseClient();
-    const fileExt = file.name.split('.').pop();
+    const fileExt = file.name.split('.').pop() || 'pdf';
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}.${fileExt}`;
 
     if (client) {
@@ -390,29 +421,52 @@ export class CertificateService {
           .from(config.storageBucket)
           .upload(fileName, file);
 
-        if (error) throw error;
+        if (!error) {
+          const { data } = client.storage
+            .from(config.storageBucket)
+            .getPublicUrl(fileName);
 
-        const { data } = client.storage
-          .from(config.storageBucket)
-          .getPublicUrl(fileName);
-
-        return {
-          url: data.publicUrl,
-          fileName: file.name
-        };
+          return {
+            url: data.publicUrl,
+            fileName: file.name
+          };
+        }
       } catch (err) {
-        console.warn('Real Supabase storage upload error, falling back to simulation:', err);
+        console.warn('Real Supabase storage upload error, falling back to server uploads:', err);
       }
     }
 
-    // Fallback: simulated local upload to data URL
+    // Fallback: upload file directly to our backend server (highly performant, saves instantly!)
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        resolve({
-          url: reader.result as string, // base64 representation
-          fileName: file.name
-        });
+      reader.onload = async () => {
+        try {
+          const base64Data = (reader.result as string).split(',')[1];
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              fileData: base64Data
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            resolve({
+              url: data.url,
+              fileName: file.name
+            });
+          } else {
+            throw new Error('Server upload failed');
+          }
+        } catch (err) {
+          console.error('Failed to upload file to backend server, falling back to base64:', err);
+          // Ultra-fallback: return base64 Data URL so the app is still functional offline
+          resolve({
+            url: reader.result as string,
+            fileName: file.name
+          });
+        }
       };
       reader.onerror = () => {
         reject(new Error('Failed to read file'));

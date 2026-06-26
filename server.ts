@@ -184,6 +184,37 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // API Route: Upload file to server-side uploads directory (highly performant alternative to large base64 in DB)
+  app.post("/api/upload", (req, res) => {
+    const { fileName, fileData } = req.body;
+    if (!fileName || !fileData) {
+      return res.status(400).json({ error: "fileName and fileData are required" });
+    }
+
+    try {
+      const buffer = Buffer.from(fileData, 'base64');
+      const uploadDir = path.join(process.cwd(), 'uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      
+      const fileExt = path.extname(fileName) || '.pdf';
+      const safeBaseName = path.basename(fileName, fileExt).replace(/[^a-zA-Z0-9.-]/g, '_');
+      const safeName = `${Date.now()}-${safeBaseName}${fileExt}`;
+      const filePath = path.join(uploadDir, safeName);
+      
+      fs.writeFileSync(filePath, buffer);
+      console.log(`Successfully uploaded file on server: ${safeName} (${buffer.length} bytes)`);
+      res.json({ success: true, url: `/uploads/${safeName}` });
+    } catch (e: any) {
+      console.error("Error processing file upload:", e);
+      res.status(500).json({ error: "Failed to save file on server", details: e.message });
+    }
+  });
+
+  // Serve static uploaded certificates
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
   // Vite integration middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
