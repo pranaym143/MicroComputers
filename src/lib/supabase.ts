@@ -58,19 +58,15 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
 
   // Use environment variables or provided credentials as default
   const metaEnv = (import.meta as any).env || {};
-  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL;
-  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL || 'https://lrhrsijdijkjqlozwfiz.supabase.co';
+  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb';
 
-  if (envUrl && envKey) {
-    return {
-      supabaseUrl: envUrl,
-      supabaseAnonKey: envKey,
-      storageBucket: 'certificates',
-      tableName: 'certificates',
-    };
-  }
-
-  return null;
+  return {
+    supabaseUrl: envUrl,
+    supabaseAnonKey: envKey,
+    storageBucket: 'certificates',
+    tableName: 'certificates',
+  };
 }
 
 // Helper to save Supabase config
