@@ -60,7 +60,7 @@ export default function Navbar({
           <div className="p-2 lg:p-2.5 rounded-xl bg-gradient-to-tr from-violet-600/20 to-blue-600/20 border border-violet-500/30 group-hover:border-violet-500/60 transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.1)]">
             <Monitor className="w-4 h-4 lg:w-5 lg:h-5 text-violet-400 group-hover:text-violet-300 transition-colors" />
           </div>
-          <div className="hidden sm:block text-left">
+          <div className="text-left">
             <span className="font-display font-bold text-lg lg:text-xl tracking-tight text-white block leading-none">
               MICRO
             </span>
