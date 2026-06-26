@@ -58,8 +58,8 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
 
   // Use environment variables or provided credentials as default
   const metaEnv = (import.meta as any).env || {};
-  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL || 'https://lrhrsijdijkjqlozwfiz.supabase.co';
-  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb';
+  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL;
+  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (envUrl && envKey) {
     return {
@@ -101,7 +101,7 @@ export function getSupabaseClient(): SupabaseClient | null {
           }
         });
       } catch (err) {
-        console.error('Failed to initialize real Supabase client', err);
+        console.warn('Failed to initialize real Supabase client', err);
         supabaseClient = null;
       }
     }
@@ -163,7 +163,7 @@ export class CertificateService {
         }
         return null;
       } catch (err) {
-        console.error('Real Supabase query error, falling back to local database:', err);
+        console.warn('Real Supabase query error, falling back to local database:', err);
       }
     }
 
@@ -196,7 +196,7 @@ export class CertificateService {
         if (error) throw error;
         return data as StudentCertificate[];
       } catch (err) {
-        console.error('Real Supabase query error, falling back to local database:', err);
+        console.warn('Real Supabase query error, falling back to local database:', err);
       }
     }
 
@@ -232,7 +232,7 @@ export class CertificateService {
           return savedCert;
         }
       } catch (err) {
-        console.error('Real Supabase save error, falling back to local storage:', err);
+        console.warn('Real Supabase save error, falling back to local storage:', err);
       }
     }
 
@@ -267,7 +267,7 @@ export class CertificateService {
           return savedCert;
         }
       } catch (err) {
-        console.error('Real Supabase update error, falling back to local storage:', err);
+        console.warn('Real Supabase update error, falling back to local storage:', err);
       }
     }
 
@@ -295,7 +295,7 @@ export class CertificateService {
 
         if (error) throw error;
       } catch (err) {
-        console.error('Real Supabase delete error, falling back to local storage:', err);
+        console.warn('Real Supabase delete error, falling back to local storage:', err);
       }
     }
 
@@ -330,7 +330,7 @@ export class CertificateService {
           fileName: file.name
         };
       } catch (err) {
-        console.error('Real Supabase storage upload error, falling back to simulation:', err);
+        console.warn('Real Supabase storage upload error, falling back to simulation:', err);
       }
     }
 

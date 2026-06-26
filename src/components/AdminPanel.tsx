@@ -442,11 +442,11 @@ export default function AdminPanel({
 
               <form onSubmit={handleLogin} className="space-y-4 text-left">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400">Admin Gmail</label>
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400">Admin-mail</label>
                   <input
                     type="email"
                     required
-                    placeholder="e.g. microcomputers@gmail.com"
+                    placeholder="Admin-mail"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full glass-input px-4 py-3 rounded-xl text-white text-xs"
