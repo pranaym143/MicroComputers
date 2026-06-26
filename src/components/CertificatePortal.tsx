@@ -213,80 +213,88 @@ export default function CertificatePortal() {
                     </button>
                   </div>
 
+                  {/* Mobile swipe helper */}
+                  <div className="flex md:hidden items-center justify-center gap-2 text-violet-400 text-[10px] font-mono tracking-wider uppercase mb-1 bg-violet-500/5 py-2 px-4 rounded-xl border border-violet-500/10">
+                    <Eye className="w-3.5 h-3.5 animate-pulse" />
+                    <span>Swipe horizontally or rotate phone to view full certificate</span>
+                  </div>
+
                   {/* Stunning Custom Premium Digital Certificate Visualizer */}
-                  <div className="relative p-0.5 rounded-3xl bg-gradient-to-r from-amber-500/30 via-violet-500/20 to-blue-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
-                    <div 
-                      className="print-certificate relative w-full aspect-[1.414] bg-[#0c0a20] rounded-[22px] border border-white/10 p-6 md:p-12 overflow-hidden flex flex-col justify-between"
-                      style={{ backgroundImage: 'radial-gradient(circle at center, rgba(245, 158, 11, 0.05) 0%, transparent 70%)' }}
-                      id="digital-certificate-canvas"
-                    >
-                      {/* Watermark / Background Vector Seal */}
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03]">
-                        <Award className="w-96 h-96 text-amber-500" />
-                      </div>
-
-                      {/* Golden border details */}
-                      <div className="absolute inset-3 border border-amber-500/20 rounded-[14px] pointer-events-none" />
-                      <div className="absolute inset-4 border border-amber-500/10 rounded-[10px] pointer-events-none" />
-                      
-                      {/* Gold corner accents */}
-                      <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-amber-500/50 rounded-tl-sm pointer-events-none" />
-                      <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-amber-500/50 rounded-tr-sm pointer-events-none" />
-                      <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-amber-500/50 rounded-bl-sm pointer-events-none" />
-                      <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-amber-500/50 rounded-br-sm pointer-events-none" />
-
-                      {/* Certificate Header */}
-                      <div className="text-center">
-                        <span className="text-[10px] md:text-xs font-mono uppercase tracking-[0.3em] text-amber-400 font-bold">
-                          MICRO COMPUTERS INSTITUTE
-                        </span>
-                        <p className="text-[8px] md:text-[10px] font-mono text-[#e2e8f0] uppercase tracking-widest mt-1">
-                          BHUVANAGIRI, TELANGANA, INDIA
-                        </p>
-                        <h2 className="font-display font-bold text-xl md:text-3xl text-gradient-neon mt-4 md:mt-6 tracking-wide">
-                          CERTIFICATE OF MERIT
-                        </h2>
-                        <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-amber-500/50 to-transparent mx-auto mt-2" />
-                      </div>
-
-                      {/* Certificate Body */}
-                      <div className="text-center my-4 md:my-6">
-                        <p className="text-xs md:text-sm font-light text-[#e2e8f0] italic">
-                          This is to proudly certify that
-                        </p>
-                        <h3 className="font-display font-semibold text-lg md:text-2xl text-white my-2 md:my-3">
-                          {certificate.student_name}
-                        </h3>
-                        <p className="text-xs md:text-sm font-light text-[#e2e8f0] max-w-lg mx-auto leading-relaxed">
-                          has successfully completed the professional curriculum and practical modules in
-                        </p>
-                        <h4 className="font-display font-medium text-base md:text-xl text-amber-300 my-2">
-                          {certificate.course}
-                        </h4>
-                        <p className="text-xs md:text-sm font-light text-[#e2e8f0]">
-                          held in the academic year <span className="text-white font-semibold">{certificate.year}</span> and is awarded this credential with grade <span className="text-white font-semibold">{certificate.grade || 'A'}</span>.
-                        </p>
-                      </div>
-
-                      {/* Certificate Footer Signatures */}
-                      <div className="flex justify-between items-end mt-4 pt-4 border-t border-white/5">
-                        <div className="text-left">
-                          <p className="text-[9px] md:text-xs text-white font-mono">{certificate.hall_ticket_number}</p>
-                          <p className="text-[8px] text-[#e2e8f0] font-mono uppercase tracking-widest mt-0.5">Verification HTN</p>
+                  <div className="w-full overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-violet-500/20 scrollbar-track-transparent rounded-3xl">
+                    <div className="relative min-w-[750px] md:min-w-0 p-0.5 rounded-3xl bg-gradient-to-r from-amber-500/30 via-violet-500/20 to-blue-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
+                      <div 
+                        className="print-certificate relative w-full aspect-[1.414] bg-[#0c0a20] rounded-[22px] border border-white/10 p-6 md:p-12 overflow-hidden flex flex-col justify-between"
+                        style={{ backgroundImage: 'radial-gradient(circle at center, rgba(245, 158, 11, 0.05) 0%, transparent 70%)' }}
+                        id="digital-certificate-canvas"
+                      >
+                        {/* Watermark / Background Vector Seal */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03]">
+                          <Award className="w-96 h-96 text-amber-500" />
                         </div>
-
-                        {/* Gold seal */}
-                        <div className="flex flex-col items-center">
-                          <div className="p-2 rounded-full bg-amber-500/10 border border-amber-500/40 text-amber-500 animate-float-slow">
-                            <Sparkles className="w-5 h-5" />
+  
+                        {/* Golden border details */}
+                        <div className="absolute inset-3 border border-amber-500/20 rounded-[14px] pointer-events-none" />
+                        <div className="absolute inset-4 border border-amber-500/10 rounded-[10px] pointer-events-none" />
+                        
+                        {/* Gold corner accents */}
+                        <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-amber-500/50 rounded-tl-sm pointer-events-none" />
+                        <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-amber-500/50 rounded-tr-sm pointer-events-none" />
+                        <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-amber-500/50 rounded-bl-sm pointer-events-none" />
+                        <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-amber-500/50 rounded-br-sm pointer-events-none" />
+  
+                        {/* Certificate Header */}
+                        <div className="text-center">
+                          <span className="text-[10px] md:text-xs font-mono uppercase tracking-[0.3em] text-amber-400 font-bold">
+                            MICRO COMPUTERS INSTITUTE
+                          </span>
+                          <p className="text-[8px] md:text-[10px] font-mono text-[#e2e8f0] uppercase tracking-widest mt-1">
+                            BHUVANAGIRI, TELANGANA, INDIA
+                          </p>
+                          <h2 className="font-display font-bold text-xl md:text-3xl text-gradient-neon mt-4 md:mt-6 tracking-wide">
+                            CERTIFICATE OF MERIT
+                          </h2>
+                          <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-amber-500/50 to-transparent mx-auto mt-2" />
+                        </div>
+  
+                        {/* Certificate Body */}
+                        <div className="text-center my-4 md:my-6">
+                          <p className="text-xs md:text-sm font-light text-[#e2e8f0] italic">
+                            This is to proudly certify that
+                          </p>
+                          <h3 className="font-display font-semibold text-lg md:text-2xl text-white my-2 md:my-3">
+                            {certificate.student_name}
+                          </h3>
+                          <p className="text-xs md:text-sm font-light text-[#e2e8f0] max-w-lg mx-auto leading-relaxed">
+                            has successfully completed the professional curriculum and practical modules in
+                          </p>
+                          <h4 className="font-display font-medium text-base md:text-xl text-amber-300 my-2">
+                            {certificate.course}
+                          </h4>
+                          <p className="text-xs md:text-sm font-light text-[#e2e8f0]">
+                            held in the academic year <span className="text-white font-semibold">{certificate.year}</span> and is awarded this credential with grade <span className="text-white font-semibold">{certificate.grade || 'A'}</span>.
+                          </p>
+                        </div>
+  
+                        {/* Certificate Footer Signatures */}
+                        <div className="flex justify-between items-end mt-4 pt-4 border-t border-white/5">
+                          <div className="text-left">
+                            <p className="text-[9px] md:text-xs text-white font-mono">{certificate.hall_ticket_number}</p>
+                            <p className="text-[8px] text-[#e2e8f0] font-mono uppercase tracking-widest mt-0.5">Verification HTN</p>
                           </div>
-                          <span className="text-[7px] font-mono uppercase text-amber-400/80 tracking-widest mt-1">OFFICIAL SEAL</span>
-                        </div>
-
-                        <div className="text-right">
-                          <div className="italic text-xs md:text-sm text-[#e2e8f0] font-serif pr-2">Micro Computers</div>
-                          <div className="w-24 md:w-32 h-px bg-white/10 my-1" />
-                          <p className="text-[8px] text-[#e2e8f0] font-mono uppercase tracking-widest">Managing Director</p>
+  
+                          {/* Gold seal */}
+                          <div className="flex flex-col items-center">
+                            <div className="p-2 rounded-full bg-amber-500/10 border border-amber-500/40 text-amber-500 animate-float-slow">
+                              <Sparkles className="w-5 h-5" />
+                            </div>
+                            <span className="text-[7px] font-mono uppercase text-amber-400/80 tracking-widest mt-1">OFFICIAL SEAL</span>
+                          </div>
+  
+                          <div className="text-right">
+                            <div className="italic text-xs md:text-sm text-[#e2e8f0] font-serif pr-2">Micro Computers</div>
+                            <div className="w-24 md:w-32 h-px bg-white/10 my-1" />
+                            <p className="text-[8px] text-[#e2e8f0] font-mono uppercase tracking-widest">Managing Director</p>
+                          </div>
                         </div>
                       </div>
                     </div>
