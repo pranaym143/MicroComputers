@@ -8,7 +8,7 @@ import Reviews from './components/Reviews';
 import Contact from './components/Contact';
 import AdminPanel from './components/AdminPanel';
 import Footer from './components/Footer';
-import { getSavedSupabaseConfig } from './lib/supabase';
+import { getSavedSupabaseConfig, initializeConfigAndCertificates } from './lib/supabase';
 
 export default function App() {
   const [activeSection, setActiveSection] = useState('home');
@@ -17,6 +17,22 @@ export default function App() {
     return localStorage.getItem('micro_computers_admin_session') === 'active';
   });
   const [isSupabaseConnected, setIsSupabaseConnected] = useState(!!getSavedSupabaseConfig());
+  const [isLoadingApp, setIsLoadingApp] = useState(true);
+
+  // Initialize central configuration and certificate lists from server
+  useEffect(() => {
+    async function initializeApp() {
+      try {
+        await initializeConfigAndCertificates();
+        setIsSupabaseConnected(!!getSavedSupabaseConfig());
+      } catch (err) {
+        console.error('App initialization failed:', err);
+      } finally {
+        setIsLoadingApp(false);
+      }
+    }
+    initializeApp();
+  }, []);
 
   // Scroll Section Spy
   useEffect(() => {

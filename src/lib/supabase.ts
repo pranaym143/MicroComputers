@@ -45,12 +45,54 @@ export const PRE_SEEDED_CERTIFICATES: StudentCertificate[] = [
 const CONFIG_KEY = 'micro_computers_supabase_config';
 const LOCAL_CERTS_KEY = 'micro_computers_local_certificates';
 
+// Shared global state caches
+let activeConfig: SupabaseConfig | null = null;
+let cachedLocalCertificates: StudentCertificate[] | null = null;
+let supabaseClient: SupabaseClient | null = null;
+
+// Initialize configurations and cached local certificates from the backend
+export async function initializeConfigAndCertificates(): Promise<void> {
+  // 1. Fetch active Supabase config from the backend
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const config = await res.json();
+      activeConfig = config;
+      // If server provides custom credentials, sync them to local storage as fallback
+      if (config && config.supabaseUrl && config.supabaseAnonKey) {
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      }
+      supabaseClient = null; // Clear cached client to force re-creation
+    }
+  } catch (err) {
+    console.warn('Failed to load active Supabase config from server:', err);
+  }
+
+  // 2. Fetch local certificates fallback list from the backend
+  try {
+    const res = await fetch('/api/certificates');
+    if (res.ok) {
+      const certs = await res.json();
+      cachedLocalCertificates = certs;
+      localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
+    }
+  } catch (err) {
+    console.warn('Failed to load local certificates list from server:', err);
+  }
+}
+
 // Helper to get Supabase config from localStorage or default environment variables
 export function getSavedSupabaseConfig(): SupabaseConfig | null {
+  if (activeConfig) {
+    return activeConfig;
+  }
+
   try {
     const saved = localStorage.getItem(CONFIG_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      activeConfig = parsed;
+      return parsed;
     }
   } catch (e) {
     console.error('Error loading Supabase config', e);
@@ -72,49 +114,72 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
 // Helper to save Supabase config
 export function saveSupabaseConfig(config: SupabaseConfig): void {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-  // Clear cached client instance when configuration updates
+  activeConfig = config;
   supabaseClient = null;
+
+  // Send config updates asynchronously to backend to share with all clients
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  }).catch(err => {
+    console.error('Failed to sync config to backend server:', err);
+  });
 }
 
 // Helper to remove Supabase config
 export function clearSupabaseConfig(): void {
   localStorage.removeItem(CONFIG_KEY);
+  activeConfig = null;
   supabaseClient = null;
+
+  // Remove config from backend server
+  fetch('/api/config', {
+    method: 'DELETE',
+  }).catch(err => {
+    console.error('Failed to clear config on backend server:', err);
+  });
 }
 
-// Get initialized real Supabase client if available
-let supabaseClient: SupabaseClient | null = null;
-
 export function getSupabaseClient(): SupabaseClient | null {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
   const config = getSavedSupabaseConfig();
   if (config && config.supabaseUrl && config.supabaseAnonKey) {
-    if (!supabaseClient) {
-      try {
-        supabaseClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-          auth: {
-            persistSession: true,
-            autoRefreshToken: true,
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to initialize real Supabase client', err);
-        supabaseClient = null;
-      }
+    try {
+      supabaseClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+        }
+      });
+      return supabaseClient;
+    } catch (err) {
+      console.warn('Failed to initialize real Supabase client', err);
+      supabaseClient = null;
     }
-    return supabaseClient;
   }
   return null;
 }
 
 // Local Database fallback implementation
 export function getLocalCertificates(): StudentCertificate[] {
+  if (cachedLocalCertificates) {
+    return cachedLocalCertificates;
+  }
+
   try {
     const data = localStorage.getItem(LOCAL_CERTS_KEY);
     if (data) {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      cachedLocalCertificates = parsed;
+      return parsed;
     } else {
       // Seed initial data
       localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(PRE_SEEDED_CERTIFICATES));
+      cachedLocalCertificates = PRE_SEEDED_CERTIFICATES;
       return PRE_SEEDED_CERTIFICATES;
     }
   } catch (e) {
@@ -124,6 +189,16 @@ export function getLocalCertificates(): StudentCertificate[] {
 
 export function saveLocalCertificates(certs: StudentCertificate[]): void {
   localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
+  cachedLocalCertificates = certs;
+
+  // Push updates asynchronously to backend database JSON file to sync with other devices immediately
+  fetch('/api/certificates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(certs),
+  }).catch(err => {
+    console.error('Failed to sync certificates list to backend server:', err);
+  });
 }
 
 // Unified Certificate Service
