@@ -31,9 +31,9 @@ export default function CertificatePortal() {
       } else {
         setError('No certificate matches found for the provided details. Please check the Hall Ticket Number or contact support.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('An error occurred while retrieving certificate data. Please try again.');
+      setError(err?.message || 'An error occurred while retrieving certificate data. Please check Database Connection and try again.');
     } finally {
       setLoading(false);
       setSearched(true);

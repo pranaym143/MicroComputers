@@ -65,7 +65,7 @@ function loadSupabaseConfig() {
     supabaseUrl: envUrl,
     supabaseAnonKey: envKey,
     storageBucket: 'certificates',
-    tableName: 'certificates',
+    tableName: 'students',
   };
 }
 
@@ -105,6 +105,50 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Disable caching for all API endpoints to guarantee fresh results on every query
+  app.use("/api", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+  });
+
+  // API Route: Admin Login (Cookie-based session)
+  app.post("/api/admin/login", (req, res) => {
+    const { email, password } = req.body;
+    const targetEmail = (email || '').trim().toLowerCase();
+    const targetPassword = (password || '').trim();
+
+    if (targetEmail === 'microcomputers@gmail.com' && targetPassword === 'computer@123') {
+      res.setHeader("Set-Cookie", "admin_session=active; Path=/; HttpOnly; SameSite=Lax");
+      return res.json({ success: true });
+    }
+    return res.status(401).json({ error: "Invalid Admin Credentials" });
+  });
+
+  // API Route: Admin Session Status
+  app.get("/api/admin/session", (req, res) => {
+    const cookies = req.headers.cookie ? req.headers.cookie.split(';').reduce((acc: any, c: string) => {
+      const parts = c.trim().split('=');
+      const key = parts[0];
+      const val = parts.slice(1).join('=');
+      acc[key] = val;
+      return acc;
+    }, {}) : {};
+
+    const session = cookies['admin_session'];
+    if (session === 'active') {
+      return res.json({ loggedIn: true });
+    }
+    return res.json({ loggedIn: false });
+  });
+
+  // API Route: Admin Logout
+  app.post("/api/admin/logout", (req, res) => {
+    res.setHeader("Set-Cookie", "admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
+    res.json({ success: true });
+  });
 
   // API Route: Get Active Supabase Configuration
   app.get("/api/config", (req, res) => {
@@ -224,8 +268,22 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    
+    // Serve static files, but prevent caching of index.html so users always get the latest version
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (path.basename(filePath) === 'index.html') {
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        }
+      }
+    }));
+
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

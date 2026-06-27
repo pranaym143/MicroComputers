@@ -15,8 +15,13 @@ export default function Footer({ onNavigate }: FooterProps) {
           className="flex items-center gap-3 cursor-pointer group"
           id="footer-logo"
         >
-          <div className="p-2 rounded-lg bg-white/2 border border-white/5 group-hover:border-violet-500/30 transition-all">
-            <Monitor className="w-4 h-4 text-violet-400" />
+          <div className="w-8 h-8 rounded-lg overflow-hidden bg-white/5 border border-white/10 group-hover:border-violet-500/30 transition-all flex items-center justify-center">
+            <img 
+              src="https://res.cloudinary.com/dqpsyh7yu/image/upload/v1782560428/ChatGPT_Image_Jun_27_2026_05_08_15_PM_poms0i.png" 
+              alt="Micro Computers Logo" 
+              className="w-full h-full object-cover rounded-lg"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div>
             <span className="font-display font-bold text-sm tracking-tight text-white block">

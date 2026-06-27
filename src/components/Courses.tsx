@@ -313,10 +313,10 @@ export default function Courses() {
               <button
                 key={category}
                 onClick={() => setSelectedCategory(category)}
-                className={`px-4 py-2 rounded-xl text-xs font-medium border cursor-pointer transition-all ${
+                className={`px-4 py-2 rounded-xl text-xs font-medium cursor-pointer transition-all glass-button-dark-black ${
                   selectedCategory === category
-                    ? 'bg-violet-600/20 border-violet-500/30 text-white shadow-[0_0_15px_rgba(139,92,246,0.1)]'
-                    : 'bg-white/3 border-white/5 text-[#e2e8f0]/60 hover:text-white hover:bg-white/5'
+                    ? 'border-violet-500/40 text-white shadow-[0_0_20px_rgba(139,92,246,0.25)] bg-violet-600/15'
+                    : 'text-[#e2e8f0]/60 hover:text-white border-white/5'
                 }`}
               >
                 {category}
@@ -340,7 +340,7 @@ export default function Courses() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ duration: 0.3 }}
-                className="glass-card p-8 rounded-3xl flex flex-col justify-between relative group border border-white/5 hover:border-violet-500/20 transition-all duration-300 bg-[#0b081e]/40"
+                className="glass-card-slider-black p-8 rounded-3xl flex flex-col justify-between relative group transition-all duration-300"
                 id={`course-card-${idx}`}
               >
                 <div>

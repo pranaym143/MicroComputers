@@ -115,13 +115,13 @@ export default function Hero({ onExploreCourses, onSearchCertificates }: HeroPro
               Explore Courses
               <BookOpen className="w-4 h-4" />
             </button>
-            <button
+             <button
               onClick={onSearchCertificates}
-              className="glass-button px-8 py-4 rounded-full text-sm font-semibold tracking-wide text-white flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 transform active:scale-95"
+              className="glass-button-gold px-8 py-4 rounded-full text-sm font-semibold tracking-wide flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
               id="hero-cert-btn"
             >
               Download Certificates
-              <FileDown className="w-4 h-4 text-white group-hover:translate-x-1 transition-transform" />
+              <FileDown className="w-4 h-4 text-[#fef3c7] group-hover:translate-x-1 transition-transform" />
             </button>
           </motion.div>
         </motion.div>
@@ -139,7 +139,7 @@ export default function Hero({ onExploreCourses, onSearchCertificates }: HeroPro
               transition={{ duration: 1, delay: 0.2 }}
               whileHover={{ rotateY: 10, rotateX: -5, scale: 1.02 }}
               style={{ perspective: 1000 }}
-              className="absolute w-full p-8 rounded-3xl glass-card border border-white/10 flex flex-col justify-between shadow-[0_20px_50px_rgba(0,0,0,0.5)] cursor-pointer"
+              className="absolute w-full p-8 rounded-3xl glass-card-slider-purple flex flex-col justify-between cursor-pointer"
               id="hero-feature-card"
             >
               <div className="flex justify-between items-start mb-12">
@@ -170,10 +170,10 @@ export default function Hero({ onExploreCourses, onSearchCertificates }: HeroPro
               initial={{ opacity: 0, x: -30, y: 30 }}
               animate={{ opacity: 1, x: -50, y: -70 }}
               transition={{ duration: 1, delay: 0.5 }}
-              className="absolute hidden md:flex items-center gap-3 px-4 py-3 rounded-2xl glass-card border border-white/10 z-20"
+              className="absolute hidden md:flex items-center gap-3 px-4 py-3 rounded-2xl glass-card-slider-purple z-20"
               id="hero-stat-card-1"
             >
-              <div className="h-2 w-2 rounded-full bg-violet-500 animate-ping" />
+              <div className="h-2 w-2 rounded-full bg-violet-400 animate-ping" />
               <div className="text-left">
                 <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">Experience</p>
                 <p className="text-sm font-semibold text-white">20+ Years</p>
@@ -185,11 +185,11 @@ export default function Hero({ onExploreCourses, onSearchCertificates }: HeroPro
               initial={{ opacity: 0, x: 30, y: -30 }}
               animate={{ opacity: 1, x: 70, y: 80 }}
               transition={{ duration: 1, delay: 0.7 }}
-              className="absolute hidden md:flex items-center gap-3 px-4 py-3 rounded-2xl glass-card border border-white/10 z-20"
+              className="absolute hidden md:flex items-center gap-3 px-4 py-3 rounded-2xl glass-card-slider-purple z-20"
               id="hero-stat-card-2"
             >
               <div className="p-1.5 rounded-lg bg-blue-500/20 border border-blue-500/30">
-                <Award className="w-4 h-4 text-blue-400" />
+                <Award className="w-4 h-4 text-violet-400" />
               </div>
               <div className="text-left">
                 <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">ISO Certified</p>

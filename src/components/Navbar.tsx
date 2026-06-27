@@ -57,8 +57,13 @@ export default function Navbar({
           className="flex items-center gap-2 lg:gap-3 cursor-pointer group shrink-0"
           id="nav-logo"
         >
-          <div className="p-2 lg:p-2.5 rounded-xl bg-gradient-to-tr from-violet-600/20 to-blue-600/20 border border-violet-500/30 group-hover:border-violet-500/60 transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.1)]">
-            <Monitor className="w-4 h-4 lg:w-5 lg:h-5 text-violet-400 group-hover:text-violet-300 transition-colors" />
+          <div className="w-9 h-9 lg:w-11 lg:h-11 rounded-xl overflow-hidden bg-gradient-to-tr from-violet-600/10 to-blue-600/10 border border-violet-500/30 group-hover:border-violet-500/60 transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.1)] flex items-center justify-center">
+            <img 
+              src="https://res.cloudinary.com/dqpsyh7yu/image/upload/v1782560428/ChatGPT_Image_Jun_27_2026_05_08_15_PM_poms0i.png" 
+              alt="Micro Computers Logo" 
+              className="w-full h-full object-cover rounded-xl"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div className="text-left">
             <span className="font-display font-bold text-lg lg:text-xl tracking-tight text-white block leading-none">
@@ -96,7 +101,7 @@ export default function Navbar({
           )}
           <button
             onClick={onOpenAdmin}
-            className="glass-button px-3 lg:px-5 py-2.5 rounded-full text-[10px] lg:text-xs font-mono font-semibold text-white tracking-wider flex items-center gap-1.5 lg:gap-2 cursor-pointer relative group overflow-hidden"
+            className="glass-button-slider-black px-3 lg:px-5 py-2.5 rounded-full text-[10px] lg:text-xs font-mono font-semibold text-white tracking-wider flex items-center gap-1.5 lg:gap-2 cursor-pointer relative group overflow-hidden"
             id="nav-admin-btn"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-violet-600/10 to-blue-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
@@ -152,7 +157,7 @@ export default function Navbar({
                 setIsOpen(false);
                 onOpenAdmin();
               }}
-              className="w-full glass-button py-4 rounded-2xl text-sm font-semibold tracking-wider flex items-center justify-center gap-3 text-white"
+              className="w-full glass-button-slider-black py-4 rounded-2xl text-sm font-semibold tracking-wider flex items-center justify-center gap-3 text-white"
               id="mobile-nav-admin-btn"
             >
               <ShieldCheck className="w-5 h-5 text-violet-400" />

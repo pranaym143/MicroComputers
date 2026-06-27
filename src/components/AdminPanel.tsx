@@ -62,6 +62,7 @@ export default function AdminPanel({
   const [certificates, setCertificates] = useState<StudentCertificate[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dbLoading, setDbLoading] = useState(false);
+  const [supabaseError, setSupabaseError] = useState<any>(null);
 
   // CRUD & Form State
   const [isEditing, setIsEditing] = useState(false);
@@ -72,6 +73,7 @@ export default function AdminPanel({
   const [formYear, setFormYear] = useState('2026');
   const [formGrade, setFormGrade] = useState('A+');
   const [formIssueDate, setFormIssueDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formPhone, setFormPhone] = useState('');
   const [uploadedFileUrl, setUploadedFileUrl] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [fileUploading, setFileUploading] = useState(false);
@@ -88,24 +90,50 @@ export default function AdminPanel({
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteConfirmHtn, setDeleteConfirmHtn] = useState<string | null>(null);
 
-  // Check login session & fetch records
+  // Check login session, fetch records & subscribe to real-time updates
   useEffect(() => {
-    const sessionToken = localStorage.getItem('micro_computers_admin_session');
-    if (sessionToken === 'active') {
-      setIsLoggedIn(true);
-      onLoginStateChange(true);
-      fetchCertificates();
-    }
+    const checkSession = async () => {
+      try {
+        const res = await fetch('/api/admin/session');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.loggedIn) {
+            setIsLoggedIn(true);
+            onLoginStateChange(true);
+            fetchCertificates();
+          }
+        }
+      } catch (err) {
+        console.error('Session check failed:', err);
+      }
+    };
+    checkSession();
     onSupabaseStateChange(!!supabaseConfig);
-  }, []);
+
+    // Set up real-time subscription to listen for database changes instantly across all devices
+    console.log('AdminPanel: Initializing Supabase realtime listener...');
+    const unsubscribe = CertificateService.subscribeToChanges(() => {
+      console.log('Real-time database change detected, auto-refreshing certificates...');
+      fetchCertificates();
+    });
+
+    return () => {
+      if (unsubscribe) {
+        console.log('AdminPanel: Cleaning up realtime listener...');
+        unsubscribe();
+      }
+    };
+  }, [supabaseConfig]);
 
   const fetchCertificates = async () => {
     setDbLoading(true);
     try {
       const records = await CertificateService.getAllCertificates();
       setCertificates(records);
-    } catch (err) {
-      console.error(err);
+      setSupabaseError(null);
+    } catch (err: any) {
+      console.error('fetchCertificates failed:', err);
+      setSupabaseError(err);
     } finally {
       setDbLoading(false);
     }
@@ -119,65 +147,42 @@ export default function AdminPanel({
 
     const targetEmail = email.trim().toLowerCase();
     const targetPassword = password.trim();
-    if (targetEmail !== 'microcomputers@gmail.com') {
-      setLoginError('Access Denied: Only microcomputers@gmail.com is authorized to access the Admin Console.');
-      setLoginLoading(false);
-      return;
-    }
 
-    // Master credential local bypass/fallback
-    if (targetEmail === 'microcomputers@gmail.com' && targetPassword === 'computer@123') {
-      localStorage.setItem('micro_computers_admin_session', 'active');
-      setIsLoggedIn(true);
-      onLoginStateChange(true);
-      fetchCertificates();
-      setLoginLoading(false);
-      return;
-    }
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: targetEmail, password: targetPassword }),
+      });
 
-    const client = getSupabaseClient();
-    if (client) {
-      // Real Supabase Auth login
-      try {
-        const { data, error } = await client.auth.signInWithPassword({
-          email: email.trim(),
-          password: targetPassword,
-        });
-        if (error) throw error;
-        if (data.user) {
-          localStorage.setItem('micro_computers_admin_session', 'active');
-          setIsLoggedIn(true);
-          onLoginStateChange(true);
-          fetchCertificates();
-        }
-      } catch (err: any) {
-        setLoginError(err.message || 'Gmail Authentication failed. Please check your credentials.');
-      } finally {
-        setLoginLoading(false);
+      if (res.ok) {
+        setIsLoggedIn(true);
+        onLoginStateChange(true);
+        fetchCertificates();
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Invalid Admin Gmail or Password.');
       }
-    } else {
-      // Offline/Local Demo Login
-      setTimeout(() => {
-        if (targetEmail === 'microcomputers@gmail.com' && targetPassword === 'computer@123') {
-          localStorage.setItem('micro_computers_admin_session', 'active');
-          setIsLoggedIn(true);
-          onLoginStateChange(true);
-          fetchCertificates();
-        } else {
-          setLoginError('Invalid Admin Gmail or Password. (For testing, use microcomputers@gmail.com / computer@123)');
-        }
-        setLoginLoading(false);
-      }, 1000);
+    } catch (err: any) {
+      setLoginError(err.message || 'Gmail Authentication failed. Please check your credentials.');
+    } finally {
+      setLoginLoading(false);
     }
   };
 
   // Logout handler
   const handleLogout = async () => {
+    try {
+      await fetch('/api/admin/logout', { method: 'POST' });
+    } catch (e) {
+      console.error('Logout request failed:', e);
+    }
     const client = getSupabaseClient();
     if (client) {
-      await client.auth.signOut();
+      try {
+        await client.auth.signOut();
+      } catch (e) {}
     }
-    localStorage.removeItem('micro_computers_admin_session');
     setIsLoggedIn(false);
     onLoginStateChange(false);
     setEmail('');
@@ -280,13 +285,14 @@ export default function AdminPanel({
       grade: formGrade,
       issue_date: formIssueDate,
       certificate_url: uploadedFileUrl || undefined,
-      file_name: uploadedFileName || undefined
+      file_name: uploadedFileName || undefined,
+      phone_number: formPhone.trim() || undefined
     };
 
     try {
       if (isEditing && editingId) {
         await CertificateService.updateCertificate(editingId, certData);
-        setFormSuccess('Student certificate updated successfully!');
+        setFormSuccess('Student saved successfully.');
       } else {
         // Check duplicate Hall Ticket number
         const exists = certificates.some(c => c.hall_ticket_number.toUpperCase() === certData.hall_ticket_number);
@@ -295,7 +301,7 @@ export default function AdminPanel({
           return;
         }
         await CertificateService.addCertificate(certData);
-        setFormSuccess('New student certificate uploaded successfully!');
+        setFormSuccess('Student saved successfully.');
       }
 
       // Refresh data list & reset form
@@ -304,8 +310,9 @@ export default function AdminPanel({
         resetForm();
         setActiveTab('records');
       }, 1500);
-    } catch (err) {
-      setFormError('Error saving certificate record. Please try again.');
+    } catch (err: any) {
+      console.error('handleSaveRecord error:', err);
+      setFormError(err?.message || 'Error saving certificate record. Please check Database Connection and try again.');
     }
   };
 
@@ -321,6 +328,7 @@ export default function AdminPanel({
     setFormIssueDate(cert.issue_date);
     setUploadedFileUrl(cert.certificate_url || '');
     setUploadedFileName(cert.file_name || '');
+    setFormPhone(cert.phone_number || '');
     setActiveTab('add');
   };
 
@@ -355,6 +363,7 @@ export default function AdminPanel({
     setFormIssueDate(new Date().toISOString().split('T')[0]);
     setUploadedFileUrl('');
     setUploadedFileName('');
+    setFormPhone('');
     setFormError('');
     setFormSuccess('');
   };
@@ -544,6 +553,44 @@ export default function AdminPanel({
 
             {/* Main Workspace Area */}
             <div className="flex-1 p-6 md:p-8 overflow-y-auto bg-transparent">
+              
+              {supabaseError && (
+                <div className="mb-6 p-5 rounded-2xl bg-red-500/10 border border-red-500/25 text-left space-y-3">
+                  <div className="flex gap-2 text-red-400 items-center font-bold text-xs font-mono">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    SUPABASE DATABASE SCHEMA WARNING
+                  </div>
+                  <p className="text-xs text-gray-300 leading-relaxed font-mono">
+                    {supabaseError.message?.includes('schema cache') || supabaseError.message?.includes('PGRST205') || (typeof supabaseError === 'string' && (supabaseError.includes('certificates') || supabaseError.includes('students') || supabaseError.includes(supabaseConfig?.tableName || ''))) || (supabaseError.code === 'PGRST205')
+                      ? `Warning: The table '${supabaseConfig?.tableName || 'students'}' was not found in your Supabase database schema cache. Please execute the SQL migration command below in your Supabase SQL Editor to create this table, then reload your PostgREST schema cache.`
+                      : (supabaseError.message || String(supabaseError))}
+                  </p>
+                  {(supabaseError.message?.includes('schema cache') || supabaseError.message?.includes('PGRST205') || (typeof supabaseError === 'string' && (supabaseError.includes('certificates') || supabaseError.includes('students') || supabaseError.includes(supabaseConfig?.tableName || ''))) || (supabaseError.code === 'PGRST205')) && (
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] font-mono text-gray-400 uppercase tracking-wider">Run this SQL in your Supabase SQL Editor:</div>
+                      <pre className="p-3.5 rounded-xl bg-black/40 text-[10px] font-mono text-violet-300 overflow-x-auto select-all leading-relaxed">
+{`create table ${supabaseConfig?.tableName || 'students'} (
+  id uuid default gen_random_uuid() primary key,
+  hall_ticket_number text unique not null,
+  student_name text not null,
+  course text,
+  year text,
+  grade text,
+  issue_date date,
+  certificate_url text,
+  file_name text,
+  phone_number text,
+  course_name text,
+  completion_year text
+);`}
+                      </pre>
+                    </div>
+                  )}
+                  <div className="text-[11px] text-gray-400">
+                    <strong className="text-violet-400">Note:</strong> While this error is active, the app continues to operate flawlessly by automatically falling back to our persistent server database storage.
+                  </div>
+                </div>
+              )}
               
               {/* TAB 1: ANALYTICS */}
               {activeTab === 'analytics' && (
@@ -832,8 +879,8 @@ export default function AdminPanel({
                       </div>
                     </div>
 
-                    {/* Grade & Issue Date */}
-                    <div className="grid sm:grid-cols-2 gap-4">
+                    {/* Grade, Issue Date & Phone Number */}
+                    <div className="grid sm:grid-cols-3 gap-4">
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Assigned Grade</label>
                         <input
@@ -850,6 +897,16 @@ export default function AdminPanel({
                           type="date"
                           value={formIssueDate}
                           onChange={(e) => setFormIssueDate(e.target.value)}
+                          className="w-full glass-input px-4 py-3 rounded-xl text-white text-xs font-mono"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Phone Number</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. +91 9876543210"
+                          value={formPhone}
+                          onChange={(e) => setFormPhone(e.target.value)}
                           className="w-full glass-input px-4 py-3 rounded-xl text-white text-xs font-mono"
                         />
                       </div>
@@ -1035,16 +1092,19 @@ export default function AdminPanel({
                       Make sure your Supabase table matches the schema structure:
                     </p>
                     <pre className="p-3.5 rounded-xl bg-black/40 text-[10px] font-mono text-violet-300 overflow-x-auto leading-relaxed">
-{`create table certificates (
+{`create table ${supabaseConfig?.tableName || 'students'} (
   id uuid default gen_random_uuid() primary key,
   hall_ticket_number text unique not null,
   student_name text not null,
-  course text not null,
-  year text not null,
+  course text,
+  year text,
   grade text,
   issue_date date,
   certificate_url text,
-  file_name text
+  file_name text,
+  phone_number text,
+  course_name text,
+  completion_year text
 );`}
                     </pre>
                   </div>

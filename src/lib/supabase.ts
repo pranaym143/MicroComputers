@@ -41,61 +41,29 @@ export const PRE_SEEDED_CERTIFICATES: StudentCertificate[] = [
   }
 ];
 
-// Key names for localStorage
-const CONFIG_KEY = 'micro_computers_supabase_config';
-const LOCAL_CERTS_KEY = 'micro_computers_local_certificates';
-
 // Shared global state caches
 let activeConfig: SupabaseConfig | null = null;
-let cachedLocalCertificates: StudentCertificate[] | null = null;
 let supabaseClient: SupabaseClient | null = null;
 
-// Initialize configurations and cached local certificates from the backend
+// Initialize configurations from the backend
 export async function initializeConfigAndCertificates(): Promise<void> {
-  // 1. Fetch active Supabase config from the backend
+  // Fetch active Supabase config from the backend
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch('/api/config?t=' + Date.now());
     if (res.ok) {
       const config = await res.json();
       activeConfig = config;
-      // If server provides custom credentials, sync them to local storage as fallback
-      if (config && config.supabaseUrl && config.supabaseAnonKey) {
-        localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-      }
       supabaseClient = null; // Clear cached client to force re-creation
     }
   } catch (err) {
     console.warn('Failed to load active Supabase config from server:', err);
   }
-
-  // 2. Fetch local certificates fallback list from the backend
-  try {
-    const res = await fetch('/api/certificates');
-    if (res.ok) {
-      const certs = await res.json();
-      cachedLocalCertificates = certs;
-      localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
-    }
-  } catch (err) {
-    console.warn('Failed to load local certificates list from server:', err);
-  }
 }
 
-// Helper to get Supabase config from localStorage or default environment variables
+// Helper to get Supabase config from default environment variables or memory
 export function getSavedSupabaseConfig(): SupabaseConfig | null {
   if (activeConfig) {
     return activeConfig;
-  }
-
-  try {
-    const saved = localStorage.getItem(CONFIG_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      activeConfig = parsed;
-      return parsed;
-    }
-  } catch (e) {
-    console.error('Error loading Supabase config', e);
   }
 
   // Use environment variables or provided credentials as default
@@ -107,13 +75,12 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
     supabaseUrl: envUrl,
     supabaseAnonKey: envKey,
     storageBucket: 'certificates',
-    tableName: 'certificates',
+    tableName: 'students',
   };
 }
 
 // Helper to save Supabase config
 export function saveSupabaseConfig(config: SupabaseConfig): void {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
   activeConfig = config;
   supabaseClient = null;
 
@@ -129,7 +96,6 @@ export function saveSupabaseConfig(config: SupabaseConfig): void {
 
 // Helper to remove Supabase config
 export function clearSupabaseConfig(): void {
-  localStorage.removeItem(CONFIG_KEY);
   activeConfig = null;
   supabaseClient = null;
 
@@ -141,74 +107,85 @@ export function clearSupabaseConfig(): void {
   });
 }
 
+let currentClientConfigStr = '';
+
 export function getSupabaseClient(): SupabaseClient | null {
-  if (supabaseClient) {
+  const config = getSavedSupabaseConfig();
+  if (!config) {
+    supabaseClient = null;
+    currentClientConfigStr = '';
+    return null;
+  }
+
+  const configStr = JSON.stringify(config);
+  if (supabaseClient && currentClientConfigStr === configStr) {
     return supabaseClient;
   }
 
-  const config = getSavedSupabaseConfig();
-  if (config && config.supabaseUrl && config.supabaseAnonKey) {
+  if (config.supabaseUrl && config.supabaseAnonKey) {
     try {
+      console.log('Initializing fresh Supabase client with config URL:', config.supabaseUrl);
       supabaseClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
         }
       });
+      currentClientConfigStr = configStr;
       return supabaseClient;
     } catch (err) {
       console.warn('Failed to initialize real Supabase client', err);
       supabaseClient = null;
+      currentClientConfigStr = '';
     }
   }
   return null;
 }
 
-// Local Database fallback implementation
-export function getLocalCertificates(): StudentCertificate[] {
-  if (cachedLocalCertificates) {
-    return cachedLocalCertificates;
-  }
-
-  try {
-    const data = localStorage.getItem(LOCAL_CERTS_KEY);
-    if (data) {
-      const parsed = JSON.parse(data);
-      cachedLocalCertificates = parsed;
-      return parsed;
-    } else {
-      // Seed initial data
-      localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(PRE_SEEDED_CERTIFICATES));
-      cachedLocalCertificates = PRE_SEEDED_CERTIFICATES;
-      return PRE_SEEDED_CERTIFICATES;
-    }
-  } catch (e) {
-    return PRE_SEEDED_CERTIFICATES;
-  }
-}
-
-export async function saveLocalCertificates(certs: StudentCertificate[]): Promise<void> {
-  localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
-  cachedLocalCertificates = certs;
-
-  // Push updates to backend database file to sync with other devices immediately
-  try {
-    const res = await fetch('/api/certificates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(certs),
-    });
-    if (!res.ok) {
-      throw new Error(`Server responded with status ${res.status}`);
-    }
-  } catch (err) {
-    console.error('Failed to sync certificates list to backend server:', err);
-  }
-}
-
 // Unified Certificate Service
 export class CertificateService {
-  // Search certificate by hall ticket & optional name
+  static lastError: any = null;
+
+  static getTableName(): string {
+    const config = getSavedSupabaseConfig();
+    return config?.tableName || 'students';
+  }
+
+  // Subscribe to real-time INSERT, UPDATE, and DELETE changes on the Supabase table
+  static subscribeToChanges(onChanges: () => void): (() => void) | null {
+    const client = getSupabaseClient();
+    if (!client) return null;
+
+    try {
+      const tableName = CertificateService.getTableName();
+      const channel = client
+        .channel(`public:${tableName}_changes`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*', // Listen to INSERT, UPDATE, and DELETE
+            schema: 'public',
+            table: tableName,
+          },
+          (payload) => {
+            console.log('Realtime change received:', payload);
+            onChanges();
+          }
+        )
+        .subscribe((status) => {
+          console.log('Supabase Realtime subscription status:', status);
+        });
+
+      return () => {
+        client.removeChannel(channel);
+      };
+    } catch (err) {
+      console.warn('Failed to subscribe to realtime changes:', err);
+      return null;
+    }
+  }
+
+  // Search certificate in the table by hall ticket & optional name
   static async searchCertificate(
     hallTicket: string,
     studentName?: string
@@ -216,262 +193,348 @@ export class CertificateService {
     const cleanTicket = hallTicket.trim().toUpperCase();
     const cleanName = studentName?.trim().toLowerCase();
 
-    // 1. Try to sync latest list from the backend server first so new updates are loaded instantly
-    try {
-      const res = await fetch('/api/certificates');
-      if (res.ok) {
-        const certs = await res.json();
-        cachedLocalCertificates = certs;
-        localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
-      }
-    } catch (err) {
-      console.warn('Failed to pre-fetch latest certificates from server:', err);
-    }
-
     const client = getSupabaseClient();
     if (client) {
       try {
-        const config = getSavedSupabaseConfig()!;
-        let query = client
-          .from(config.tableName)
+        const tableName = CertificateService.getTableName();
+        const query = client
+          .from(tableName)
           .select('*')
           .eq('hall_ticket_number', cleanTicket);
 
         const { data, error } = await query;
         if (error) throw error;
+        CertificateService.lastError = null;
+
         if (data && data.length > 0) {
-          const match = data[0] as StudentCertificate;
+          const match = data[0] as any;
+          const cert: StudentCertificate = {
+            id: match.id || match.hall_ticket_number,
+            hall_ticket_number: match.hall_ticket_number,
+            student_name: match.student_name,
+            course: match.course_name || match.course || '',
+            year: match.completion_year || match.year || '',
+            grade: match.grade || 'A+',
+            issue_date: match.issue_date || '',
+            certificate_url: match.certificate_url,
+            file_name: match.file_name,
+            phone_number: match.phone_number,
+            course_name: match.course_name,
+            completion_year: match.completion_year,
+          };
+
           if (cleanName) {
-            if (match.student_name.toLowerCase().includes(cleanName)) {
-              return match;
+            if (cert.student_name.toLowerCase().includes(cleanName)) {
+              return cert;
             }
             return null;
           }
-          return match;
+          return cert;
         }
         return null;
       } catch (err) {
-        console.warn('Real Supabase query error, falling back to server local database:', err);
+        console.error('Real Supabase query error in searchCertificate:', err);
+        CertificateService.lastError = err;
+        throw err;
       }
     }
-
-    // Fallback to local certificates (which we just synced above!)
-    const certs = getLocalCertificates();
-    const found = certs.find(c => c.hall_ticket_number.toUpperCase() === cleanTicket);
-    if (found) {
-      if (cleanName) {
-        if (found.student_name.toLowerCase().includes(cleanName)) {
-          return found;
-        }
-        return null;
-      }
-      return found;
-    }
-    return null;
+    throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
   }
 
-  // Get all certificates (Admin dashboard)
+  // Get all certificates from the table (Admin dashboard)
   static async getAllCertificates(): Promise<StudentCertificate[]> {
-    // 1. Try to fetch the absolute latest certificates from the server first to update across all devices instantly
-    try {
-      const res = await fetch('/api/certificates');
-      if (res.ok) {
-        const certs = await res.json();
-        cachedLocalCertificates = certs;
-        localStorage.setItem(LOCAL_CERTS_KEY, JSON.stringify(certs));
-        return certs;
-      }
-    } catch (err) {
-      console.warn('Failed to fetch latest certificates list from server:', err);
-    }
-
     const client = getSupabaseClient();
     if (client) {
       try {
-        const config = getSavedSupabaseConfig()!;
+        const tableName = CertificateService.getTableName();
         const { data, error } = await client
-          .from(config.tableName)
+          .from(tableName)
           .select('*')
           .order('hall_ticket_number', { ascending: true });
 
         if (error) throw error;
-        return data as StudentCertificate[];
+        CertificateService.lastError = null;
+
+        return (data || []).map((match: any) => ({
+          id: match.id || match.hall_ticket_number,
+          hall_ticket_number: match.hall_ticket_number,
+          student_name: match.student_name,
+          course: match.course_name || match.course || '',
+          year: match.completion_year || match.year || '',
+          grade: match.grade || 'A+',
+          issue_date: match.issue_date || '',
+          certificate_url: match.certificate_url,
+          file_name: match.file_name,
+          phone_number: match.phone_number,
+          course_name: match.course_name,
+          completion_year: match.completion_year,
+        }));
       } catch (err) {
-        console.warn('Real Supabase query error, falling back to local database:', err);
+        console.error('Real Supabase query error in getAllCertificates:', err);
+        CertificateService.lastError = err;
+        throw err;
       }
     }
-
-    return getLocalCertificates();
+    throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
   }
 
-  // Add a certificate record
+  // Add a certificate record with retry and explicit post-save confirmation check
   static async addCertificate(cert: Omit<StudentCertificate, 'id'>): Promise<StudentCertificate> {
     const newId = `cert-${Date.now()}`;
     const newCert: StudentCertificate = { ...cert, id: newId };
 
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const config = getSavedSupabaseConfig()!;
-        // FIX: Must insert newCert which includes the ID, rather than cert which does not have it!
-        const { data, error } = await client
-          .from(config.tableName)
-          .insert([newCert])
-          .select();
-
-        if (error) throw error;
-        if (data && data.length > 0) {
-          const savedCert = data[0] as StudentCertificate;
-          // Sync with local storage & server database
-          const certs = getLocalCertificates();
-          const existingIdx = certs.findIndex(c => c.id === savedCert.id || c.hall_ticket_number === savedCert.hall_ticket_number);
-          if (existingIdx !== -1) {
-            certs[existingIdx] = savedCert;
-          } else {
-            certs.push(savedCert);
-          }
-          await saveLocalCertificates(certs);
-          return savedCert;
-        }
-      } catch (err) {
-        console.warn('Real Supabase save error, falling back to local/server storage:', err);
-      }
+    if (!client) {
+      throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
     }
 
-    const certs = getLocalCertificates();
-    certs.push(newCert);
-    await saveLocalCertificates(certs);
-    return newCert;
+    try {
+      // Build a comprehensive payload mapping to support both schema styles!
+      const payload: any = {
+        id: newCert.id,
+        hall_ticket_number: newCert.hall_ticket_number,
+        student_name: newCert.student_name,
+        course: newCert.course,
+        year: newCert.year,
+        grade: newCert.grade || null,
+        issue_date: newCert.issue_date || null,
+        certificate_url: newCert.certificate_url || null,
+        file_name: newCert.file_name || null,
+        phone_number: (newCert as any).phone_number || null,
+        course_name: newCert.course,
+        completion_year: newCert.year,
+      };
+
+      let attempt = 0;
+      let lastErr: any = null;
+      const tableName = CertificateService.getTableName();
+
+      while (attempt < 5) {
+        console.log(`Attempting insert into ${tableName} (attempt ${attempt + 1})...`, payload);
+        const { error } = await client
+          .from(tableName)
+          .insert([payload]);
+
+        if (!error) {
+          CertificateService.lastError = null;
+
+          // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists!
+          console.log(`Querying back from Supabase to confirm row exists in ${tableName}...`);
+          const { data: confirmData, error: confirmError } = await client
+            .from(tableName)
+            .select('*')
+            .eq('hall_ticket_number', payload.hall_ticket_number);
+
+          if (confirmError || !confirmData || confirmData.length === 0) {
+            throw new Error(`Row confirmation failed: Save returned success but the record with Hall Ticket Number "${payload.hall_ticket_number}" could not be found in Supabase.`);
+          }
+
+          console.log('Successfully confirmed student row exists in Supabase:', confirmData[0]);
+          const saved = confirmData[0];
+
+          return {
+            id: saved.id || saved.hall_ticket_number,
+            hall_ticket_number: saved.hall_ticket_number,
+            student_name: saved.student_name,
+            course: saved.course_name || saved.course || '',
+            year: saved.completion_year || saved.year || '',
+            grade: saved.grade || 'A+',
+            issue_date: saved.issue_date || '',
+            certificate_url: saved.certificate_url,
+            file_name: saved.file_name,
+            phone_number: saved.phone_number,
+            course_name: saved.course_name,
+            completion_year: saved.completion_year,
+          };
+        }
+
+        lastErr = error;
+        const errMsg = (error.message || '').toLowerCase();
+        const errDetails = (error.details || '').toLowerCase();
+
+        // Check if there is a column error and strip unknown columns dynamically
+        const match = errMsg.match(/column "([^"]+)" of relation/) || 
+                      errDetails.match(/column "([^"]+)" of relation/) || 
+                      errMsg.match(/column "([^"]+)" does not exist/);
+
+        if (match && match[1]) {
+          const colToRemove = match[1];
+          console.log(`Column "${colToRemove}" does not exist in schema. Stripping and retrying...`);
+          delete payload[colToRemove];
+          attempt++;
+        } else if (errMsg.includes('phone_number') || errDetails.includes('phone_number')) {
+          delete payload.phone_number;
+          attempt++;
+        } else if (errMsg.includes('course_name') || errDetails.includes('course_name')) {
+          delete payload.course_name;
+          attempt++;
+        } else if (errMsg.includes('completion_year') || errDetails.includes('completion_year')) {
+          delete payload.completion_year;
+          attempt++;
+        } else {
+          break;
+        }
+      }
+
+      throw lastErr || new Error('Failed to insert certificate into Supabase.');
+    } catch (err: any) {
+      console.error('Real Supabase save error:', err);
+      CertificateService.lastError = err;
+      throw err;
+    }
   }
 
-  // Update a certificate record
+  // Update a certificate record with retry and post-update confirmation check
   static async updateCertificate(id: string, updated: Partial<StudentCertificate>): Promise<StudentCertificate | null> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const config = getSavedSupabaseConfig()!;
-        const { data, error } = await client
-          .from(config.tableName)
-          .update(updated)
-          .eq('id', id)
-          .select();
+    if (!client) {
+      throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
+    }
 
-        if (error) throw error;
-        if (data && data.length > 0) {
-          const savedCert = data[0] as StudentCertificate;
-          // Sync with local storage
-          const certs = getLocalCertificates();
-          const idx = certs.findIndex(c => c.id === id);
-          if (idx !== -1) {
-            certs[idx] = savedCert;
-            await saveLocalCertificates(certs);
-          }
-          return savedCert;
-        }
-      } catch (err) {
-        console.warn('Real Supabase update error, falling back to local/server storage:', err);
+    try {
+      const payload: any = { ...updated };
+      
+      if (updated.course !== undefined) {
+        payload.course_name = updated.course;
       }
-    }
+      if (updated.year !== undefined) {
+        payload.completion_year = updated.year;
+      }
 
-    const certs = getLocalCertificates();
-    const idx = certs.findIndex(c => c.id === id);
-    if (idx !== -1) {
-      const merged = { ...certs[idx], ...updated };
-      certs[idx] = merged;
-      await saveLocalCertificates(certs);
-      return merged;
+      let attempt = 0;
+      let lastErr: any = null;
+      const tableName = CertificateService.getTableName();
+
+      while (attempt < 5) {
+        console.log(`Attempting update of ${id} in ${tableName} (attempt ${attempt + 1})...`, payload);
+        const htn = updated.hall_ticket_number || id;
+        const { error } = await client
+          .from(tableName)
+          .update(payload)
+          .or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
+
+        if (!error) {
+          CertificateService.lastError = null;
+
+          // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists and is updated!
+          console.log(`Querying back from Supabase to confirm updated row exists in ${tableName}...`);
+          const { data: confirmData, error: confirmError } = await client
+            .from(tableName)
+            .select('*')
+            .or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
+
+          if (confirmError || !confirmData || confirmData.length === 0) {
+            throw new Error(`Row confirmation failed: Update returned success but the record could not be found in Supabase.`);
+          }
+
+          console.log('Successfully confirmed updated student row exists in Supabase:', confirmData[0]);
+          const saved = confirmData[0];
+
+          return {
+            id: saved.id || saved.hall_ticket_number,
+            hall_ticket_number: saved.hall_ticket_number,
+            student_name: saved.student_name,
+            course: saved.course_name || saved.course || '',
+            year: saved.completion_year || saved.year || '',
+            grade: saved.grade || 'A+',
+            issue_date: saved.issue_date || '',
+            certificate_url: saved.certificate_url,
+            file_name: saved.file_name,
+            phone_number: saved.phone_number,
+            course_name: saved.course_name,
+            completion_year: saved.completion_year,
+          };
+        }
+
+        lastErr = error;
+        const errMsg = (error.message || '').toLowerCase();
+        const errDetails = (error.details || '').toLowerCase();
+
+        const match = errMsg.match(/column "([^"]+)" of relation/) || 
+                      errDetails.match(/column "([^"]+)" of relation/) || 
+                      errMsg.match(/column "([^"]+)" does not exist/);
+
+        if (match && match[1]) {
+          const colToRemove = match[1];
+          console.log(`Column "${colToRemove}" does not exist in schema. Stripping and retrying...`);
+          delete payload[colToRemove];
+          attempt++;
+        } else if (errMsg.includes('phone_number') || errDetails.includes('phone_number')) {
+          delete payload.phone_number;
+          attempt++;
+        } else if (errMsg.includes('course_name') || errDetails.includes('course_name')) {
+          delete payload.course_name;
+          attempt++;
+        } else if (errMsg.includes('completion_year') || errDetails.includes('completion_year')) {
+          delete payload.completion_year;
+          attempt++;
+        } else {
+          break;
+        }
+      }
+
+      throw lastErr || new Error('Failed to update student in Supabase.');
+    } catch (err: any) {
+      console.error('Real Supabase update error:', err);
+      CertificateService.lastError = err;
+      throw err;
     }
-    return null;
   }
 
-  // Delete a certificate record
+  // Delete a certificate record from the table
   static async deleteCertificate(id: string): Promise<boolean> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const config = getSavedSupabaseConfig()!;
-        const { error } = await client
-          .from(config.tableName)
-          .delete()
-          .eq('id', id);
-
-        if (error) throw error;
-      } catch (err) {
-        console.warn('Real Supabase delete error, falling back to local/server storage:', err);
-      }
+    if (!client) {
+      throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
     }
 
-    // Always keep server and local storage in sync
-    const certs = getLocalCertificates();
-    const filtered = certs.filter(c => c.id !== id);
-    await saveLocalCertificates(filtered);
-    return true;
+    try {
+      const tableName = CertificateService.getTableName();
+      const { error } = await client
+        .from(tableName)
+        .delete()
+        .or(`id.eq."${id}",hall_ticket_number.eq."${id}"`);
+
+      if (error) throw error;
+      CertificateService.lastError = null;
+      return true;
+    } catch (err: any) {
+      console.error('Real Supabase delete error:', err);
+      CertificateService.lastError = err;
+      throw err;
+    }
   }
 
-  // Upload certificate file (returns URL of uploaded file)
+  // Upload PDF to Supabase certificates bucket
   static async uploadCertificateFile(file: File): Promise<{ url: string; fileName: string }> {
     const client = getSupabaseClient();
+    if (!client) {
+      throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
+    }
+
     const fileExt = file.name.split('.').pop() || 'pdf';
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}.${fileExt}`;
 
-    if (client) {
-      try {
-        const config = getSavedSupabaseConfig()!;
-        const { error } = await client.storage
-          .from(config.storageBucket)
-          .upload(fileName, file);
+    try {
+      const config = getSavedSupabaseConfig()!;
+      const bucketName = config.storageBucket || 'certificates';
+      const { error } = await client.storage
+        .from(bucketName)
+        .upload(fileName, file);
 
-        if (!error) {
-          const { data } = client.storage
-            .from(config.storageBucket)
-            .getPublicUrl(fileName);
+      if (error) throw error;
 
-          return {
-            url: data.publicUrl,
-            fileName: file.name
-          };
-        }
-      } catch (err) {
-        console.warn('Real Supabase storage upload error, falling back to server uploads:', err);
-      }
+      const { data } = client.storage
+        .from(bucketName)
+        .getPublicUrl(fileName);
+
+      return {
+        url: data.publicUrl,
+        fileName: file.name
+      };
+    } catch (err: any) {
+      console.error('Real Supabase storage upload error:', err);
+      throw err;
     }
-
-    // Fallback: upload file directly to our backend server (highly performant, saves instantly!)
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64Data = (reader.result as string).split(',')[1];
-          const res = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              fileData: base64Data
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            resolve({
-              url: data.url,
-              fileName: file.name
-            });
-          } else {
-            throw new Error('Server upload failed');
-          }
-        } catch (err) {
-          console.error('Failed to upload file to backend server, falling back to base64:', err);
-          // Ultra-fallback: return base64 Data URL so the app is still functional offline
-          resolve({
-            url: reader.result as string,
-            fileName: file.name
-          });
-        }
-      };
-      reader.onerror = () => {
-        reject(new Error('Failed to read file'));
-      };
-      reader.readAsDataURL(file);
-    });
   }
 }

@@ -13,9 +13,7 @@ import { getSavedSupabaseConfig, initializeConfigAndCertificates } from './lib/s
 export default function App() {
   const [activeSection, setActiveSection] = useState('home');
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
-    return localStorage.getItem('micro_computers_admin_session') === 'active';
-  });
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [isSupabaseConnected, setIsSupabaseConnected] = useState(!!getSavedSupabaseConfig());
   const [isLoadingApp, setIsLoadingApp] = useState(true);
 
@@ -25,6 +23,13 @@ export default function App() {
       try {
         await initializeConfigAndCertificates();
         setIsSupabaseConnected(!!getSavedSupabaseConfig());
+
+        // Fetch session from server
+        const sessionRes = await fetch('/api/admin/session');
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          setIsAdminLoggedIn(!!sessionData.loggedIn);
+        }
       } catch (err) {
         console.error('App initialization failed:', err);
       } finally {
@@ -145,7 +150,7 @@ export default function App() {
           onClose={() => {
             setIsAdminOpen(false);
             setIsAdminLoggedIn(false);
-            localStorage.removeItem('micro_computers_admin_session');
+            fetch('/api/admin/logout', { method: 'POST' }).catch(() => {});
           }}
           onLoginStateChange={(isLoggedIn) => setIsAdminLoggedIn(isLoggedIn)}
           onSupabaseStateChange={(isConnected) => setIsSupabaseConnected(isConnected)}
