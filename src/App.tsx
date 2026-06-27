@@ -8,7 +8,7 @@ import Reviews from './components/Reviews';
 import Contact from './components/Contact';
 import AdminPanel from './components/AdminPanel';
 import Footer from './components/Footer';
-import { getSavedSupabaseConfig, initializeConfigAndCertificates } from './lib/supabase';
+import { getSavedSupabaseConfig, initializeConfigAndCertificates, safeParseJson } from './lib/supabase';
 
 export default function App() {
   const [activeSection, setActiveSection] = useState('home');
@@ -27,7 +27,7 @@ export default function App() {
         // Fetch session from server
         const sessionRes = await fetch('/api/admin/session');
         if (sessionRes.ok) {
-          const sessionData = await sessionRes.json();
+          const sessionData = await safeParseJson(sessionRes);
           setIsAdminLoggedIn(!!sessionData.loggedIn);
         }
 

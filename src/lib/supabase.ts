@@ -41,6 +41,42 @@ export const PRE_SEEDED_CERTIFICATES: StudentCertificate[] = [
   }
 ];
 
+// Safe JSON response parser with detailed error handling
+export async function safeParseJson(res: Response): Promise<any> {
+  const contentType = res.headers.get("content-type") || "";
+  
+  if (!res.ok) {
+    if (contentType.includes("application/json")) {
+      try {
+        const errJson = await res.json();
+        throw new Error(errJson.error || errJson.message || `HTTP error! Status: ${res.status}`);
+      } catch {
+        throw new Error(`HTTP error! Status: ${res.status}`);
+      }
+    } else {
+      const text = await res.text();
+      if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+        throw new Error("Server returned an invalid response.");
+      }
+      throw new Error(text || `HTTP error! Status: ${res.status}`);
+    }
+  }
+
+  if (!contentType.includes("application/json")) {
+    const text = await res.text();
+    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+      throw new Error("Server returned an invalid response.");
+    }
+    throw new Error(`Expected JSON response but received content-type: ${contentType}`);
+  }
+
+  try {
+    return await res.json();
+  } catch (err: any) {
+    throw new Error("Failed to parse JSON response: " + err.message);
+  }
+}
+
 // Shared global state caches
 let activeConfig: SupabaseConfig | null = null;
 let supabaseClient: SupabaseClient | null = null;
@@ -51,7 +87,7 @@ export async function initializeConfigAndCertificates(): Promise<void> {
   try {
     const res = await fetch('/api/config?t=' + Date.now());
     if (res.ok) {
-      const config = await res.json();
+      const config = await safeParseJson(res);
       activeConfig = config;
       supabaseClient = null; // Clear cached client to force re-creation
     }
@@ -296,13 +332,14 @@ export class CertificateService {
       };
 
       const tableName = CertificateService.getTableName();
-      console.log(`Attempting direct insert into ${tableName}...`, payload);
+      console.log(`[DATABASE INSERT START] Attempting direct insert into ${tableName}...`, payload);
       
       const { error } = await client
         .from(tableName)
         .insert([payload]);
 
       if (error) {
+        console.error('[DATABASE INSERT FAILURE] Real Supabase insert error:', error);
         throw error;
       }
 
@@ -316,10 +353,12 @@ export class CertificateService {
         .eq('hall_ticket_number', payload.hall_ticket_number);
 
       if (confirmError || !confirmData || confirmData.length === 0) {
-        throw new Error(`Row confirmation failed: Save returned success but the record with Hall Ticket Number "${payload.hall_ticket_number}" could not be found in Supabase.`);
+        const confirmErr = new Error(`Row confirmation failed: Save returned success but the record with Hall Ticket Number "${payload.hall_ticket_number}" could not be found in Supabase.`);
+        console.error('[DATABASE INSERT FAILURE]', confirmErr);
+        throw confirmErr;
       }
 
-      console.log('Successfully confirmed student row exists in Supabase:', confirmData[0]);
+      console.log('[DATABASE INSERT SUCCESS] Successfully confirmed student row exists in Supabase:', confirmData[0]);
       const saved = confirmData[0];
 
       return {
@@ -337,7 +376,7 @@ export class CertificateService {
         completion_year: saved.completion_year,
       };
     } catch (err: any) {
-      console.error('Real Supabase save error:', err);
+      console.error('[DATABASE INSERT FAILURE] Real Supabase save error:', err);
       CertificateService.lastError = err;
       throw err;
     }
@@ -373,7 +412,7 @@ export class CertificateService {
 
       const htn = updated.hall_ticket_number || id;
       const tableName = CertificateService.getTableName();
-      console.log(`Attempting direct update of ${id} in ${tableName}...`, payload);
+      console.log(`[DATABASE UPDATE START] Attempting direct update of ${id} in ${tableName}...`, payload);
 
       let query = client.from(tableName).update(payload);
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -385,6 +424,7 @@ export class CertificateService {
 
       const { error } = await query;
       if (error) {
+        console.error('[DATABASE UPDATE FAILURE] Real Supabase update error:', error);
         throw error;
       }
 
@@ -401,10 +441,12 @@ export class CertificateService {
 
       const { data: confirmData, error: confirmError } = await confirmQuery;
       if (confirmError || !confirmData || confirmData.length === 0) {
-        throw new Error(`Row confirmation failed: Update returned success but the record could not be found in Supabase.`);
+        const confirmErr = new Error(`Row confirmation failed: Update returned success but the record could not be found in Supabase.`);
+        console.error('[DATABASE UPDATE FAILURE]', confirmErr);
+        throw confirmErr;
       }
 
-      console.log('Successfully confirmed updated student row exists in Supabase:', confirmData[0]);
+      console.log('[DATABASE UPDATE SUCCESS] Successfully confirmed updated student row exists in Supabase:', confirmData[0]);
       const saved = confirmData[0];
 
       return {
@@ -422,7 +464,7 @@ export class CertificateService {
         completion_year: saved.completion_year,
       };
     } catch (err: any) {
-      console.error('Real Supabase update error:', err);
+      console.error('[DATABASE UPDATE FAILURE] Real Supabase update error:', err);
       CertificateService.lastError = err;
       throw err;
     }
@@ -447,11 +489,15 @@ export class CertificateService {
       }
 
       const { error } = await query;
-      if (error) throw error;
+      if (error) {
+        console.error('[DATABASE DELETE FAILURE] Real Supabase delete error:', error);
+        throw error;
+      }
       CertificateService.lastError = null;
+      console.log('[DATABASE DELETE SUCCESS] Successfully deleted student record in Supabase with id:', id);
       return true;
     } catch (err: any) {
-      console.error('Real Supabase delete error:', err);
+      console.error('[DATABASE DELETE FAILURE] Real Supabase delete error:', err);
       CertificateService.lastError = err;
       throw err;
     }
@@ -470,34 +516,44 @@ export class CertificateService {
     const config = getSavedSupabaseConfig()!;
     const bucketName = config.storageBucket || 'certificates';
 
-    console.log(`Uploading file ${file.name} to Supabase bucket "${bucketName}"...`);
-    const { error, data: uploadData } = await client.storage
-      .from(bucketName)
-      .upload(fileName, file, {
-        cacheControl: '3600',
-        upsert: false
-      });
+    console.log(`[UPLOAD START] Uploading file ${file.name} to Supabase bucket "${bucketName}"...`);
+    try {
+      const { error, data: uploadData } = await client.storage
+        .from(bucketName)
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
 
-    if (error) {
-      console.error('Real Supabase storage upload error:', error);
-      throw error;
+      if (error) {
+        console.error('[UPLOAD FAILURE] Real Supabase storage upload error:', error);
+        throw error;
+      }
+
+      if (!uploadData) {
+        const noDataErr = new Error('Supabase upload completed but no data return was verified.');
+        console.error('[UPLOAD FAILURE]', noDataErr);
+        throw noDataErr;
+      }
+
+      const { data } = client.storage
+        .from(bucketName)
+        .getPublicUrl(fileName);
+
+      if (!data || !data.publicUrl) {
+        const noUrlErr = new Error('Failed to obtain the public URL for the uploaded file.');
+        console.error('[UPLOAD FAILURE]', noUrlErr);
+        throw noUrlErr;
+      }
+
+      console.log('[UPLOAD SUCCESS] File uploaded successfully. Public URL:', data.publicUrl);
+      return {
+        url: data.publicUrl,
+        fileName: file.name
+      };
+    } catch (err: any) {
+      console.error('[UPLOAD FAILURE] Exception in uploadCertificateFile:', err);
+      throw err;
     }
-
-    if (!uploadData) {
-      throw new Error('Supabase upload completed but no data return was verified.');
-    }
-
-    const { data } = client.storage
-      .from(bucketName)
-      .getPublicUrl(fileName);
-
-    if (!data || !data.publicUrl) {
-      throw new Error('Failed to obtain the public URL for the uploaded file.');
-    }
-
-    return {
-      url: data.publicUrl,
-      fileName: file.name
-    };
   }
 }

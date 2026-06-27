@@ -28,7 +28,8 @@ import {
   getSavedSupabaseConfig, 
   saveSupabaseConfig, 
   clearSupabaseConfig, 
-  getSupabaseClient 
+  getSupabaseClient,
+  safeParseJson
 } from '../lib/supabase';
 import { StudentCertificate, SupabaseConfig } from '../types';
 
@@ -148,7 +149,7 @@ export default function AdminPanel({
       try {
         const res = await fetch('/api/admin/session');
         if (res.ok) {
-          const data = await res.json();
+          const data = await safeParseJson(res);
           if (data.loggedIn) {
             setIsLoggedIn(true);
             onLoginStateChange(true);
@@ -212,7 +213,7 @@ export default function AdminPanel({
         onLoginStateChange(true);
         fetchCertificates();
       } else {
-        const errData = await res.json();
+        const errData = await safeParseJson(res);
         throw new Error(errData.error || 'Invalid Admin Gmail or Password.');
       }
     } catch (err: any) {

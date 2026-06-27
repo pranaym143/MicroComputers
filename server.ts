@@ -114,6 +114,23 @@ async function startServer() {
     next();
   });
 
+  // Middleware to authenticate admin-only API endpoints
+  const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const cookies = req.headers.cookie ? req.headers.cookie.split(';').reduce((acc: any, c: string) => {
+      const parts = c.trim().split('=');
+      const key = parts[0];
+      const val = parts.slice(1).join('=');
+      acc[key] = val;
+      return acc;
+    }, {}) : {};
+
+    if (cookies['admin_session'] === 'active') {
+      return next();
+    }
+    console.warn(`[AUTH ERROR] Unauthorized attempt to access admin-only endpoint: ${req.method} ${req.path} from IP: ${req.ip}`);
+    return res.status(401).json({ error: "Unauthorized access. Please log in as an administrator." });
+  };
+
   // API Route: Admin Login (Cookie-based session)
   app.post("/api/admin/login", (req, res) => {
     const { email, password } = req.body;
@@ -122,8 +139,10 @@ async function startServer() {
 
     if (targetEmail === 'microcomputers@gmail.com' && targetPassword === 'computer@123') {
       res.setHeader("Set-Cookie", "admin_session=active; Path=/; HttpOnly; SameSite=Lax");
+      console.log(`[AUTH SUCCESS] Successful login for admin: ${targetEmail}`);
       return res.json({ success: true });
     }
+    console.warn(`[AUTH ERROR] Failed login attempt for email: ${targetEmail} from IP: ${req.ip}`);
     return res.status(401).json({ error: "Invalid Admin Credentials" });
   });
 
@@ -147,6 +166,7 @@ async function startServer() {
   // API Route: Admin Logout
   app.post("/api/admin/logout", (req, res) => {
     res.setHeader("Set-Cookie", "admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
+    console.log("[AUTH LOGOUT] Admin logged out successfully");
     res.json({ success: true });
   });
 
@@ -157,9 +177,10 @@ async function startServer() {
   });
 
   // API Route: Save Active Supabase Configuration
-  app.post("/api/config", (req, res) => {
+  app.post("/api/config", requireAdmin, (req, res) => {
     const config = req.body;
     if (!config.supabaseUrl || !config.supabaseAnonKey) {
+      console.error("[API ERROR] Save config failed: missing supabaseUrl or supabaseAnonKey");
       return res.status(400).json({ error: "supabaseUrl and supabaseAnonKey are required" });
     }
     const newConfig = {
@@ -169,18 +190,21 @@ async function startServer() {
       tableName: config.tableName || 'certificates',
     };
     saveSupabaseConfig(newConfig);
+    console.log("[API SUCCESS] Supabase configuration updated successfully");
     res.json({ success: true, config: newConfig });
   });
 
   // API Route: Delete/Clear Active Supabase Configuration
-  app.delete("/api/config", (req, res) => {
+  app.delete("/api/config", requireAdmin, (req, res) => {
     try {
       if (fs.existsSync(CONFIG_FILE_PATH)) {
         fs.unlinkSync(CONFIG_FILE_PATH);
       }
+      console.log("[API SUCCESS] Supabase configuration deleted successfully");
       res.json({ success: true });
-    } catch (e) {
-      res.status(500).json({ error: "Failed to clear configuration file" });
+    } catch (e: any) {
+      console.error("[API ERROR] Failed to clear configuration file:", e);
+      res.status(500).json({ error: "Failed to clear configuration file", details: e.message || String(e) });
     }
   });
 
@@ -191,20 +215,23 @@ async function startServer() {
   });
 
   // API Route: Save/Update Local Fallback Certificates List
-  app.post("/api/certificates", (req, res) => {
+  app.post("/api/certificates", requireAdmin, (req, res) => {
     const certs = req.body;
     if (Array.isArray(certs)) {
       saveLocalCertificates(certs);
+      console.log(`[API SUCCESS] Local certificates updated successfully: ${certs.length} items`);
       res.json({ success: true, count: certs.length });
     } else {
+      console.error("[API ERROR] Expected an array of certificates for bulk save");
       res.status(400).json({ error: "Expected an array of certificates" });
     }
   });
 
   // API Route: Add or Update a single certificate in Local Fallback List
-  app.post("/api/certificates/single", (req, res) => {
+  app.post("/api/certificates/single", requireAdmin, (req, res) => {
     const newCert = req.body;
     if (!newCert.id || !newCert.hall_ticket_number || !newCert.student_name) {
+      console.error("[API ERROR] Missing key properties for single local certificate insert/update");
       return res.status(400).json({ error: "id, hall_ticket_number, and student_name are required" });
     }
 
@@ -216,22 +243,25 @@ async function startServer() {
       certs.push(newCert);
     }
     saveLocalCertificates(certs);
+    console.log(`[API SUCCESS] Single local certificate saved: ${newCert.hall_ticket_number}`);
     res.json({ success: true, certificate: newCert });
   });
 
   // API Route: Delete a single certificate in Local Fallback List
-  app.delete("/api/certificates/:id", (req, res) => {
+  app.delete("/api/certificates/:id", requireAdmin, (req, res) => {
     const { id } = req.params;
     const certs = loadLocalCertificates();
     const filtered = certs.filter((c: any) => c.id !== id);
     saveLocalCertificates(filtered);
+    console.log(`[API SUCCESS] Single local certificate deleted with ID: ${id}`);
     res.json({ success: true });
   });
 
   // API Route: Upload file to server-side uploads directory (highly performant alternative to large base64 in DB)
-  app.post("/api/upload", (req, res) => {
+  app.post("/api/upload", requireAdmin, (req, res) => {
     const { fileName, fileData } = req.body;
     if (!fileName || !fileData) {
+      console.error("[API ERROR] Upload failed: fileName or fileData missing");
       return res.status(400).json({ error: "fileName and fileData are required" });
     }
 
@@ -248,11 +278,11 @@ async function startServer() {
       const filePath = path.join(uploadDir, safeName);
       
       fs.writeFileSync(filePath, buffer);
-      console.log(`Successfully uploaded file on server: ${safeName} (${buffer.length} bytes)`);
+      console.log(`[UPLOAD SUCCESS] Successfully uploaded file on server: ${safeName} (${buffer.length} bytes)`);
       res.json({ success: true, url: `/uploads/${safeName}` });
     } catch (e: any) {
-      console.error("Error processing file upload:", e);
-      res.status(500).json({ error: "Failed to save file on server", details: e.message });
+      console.error("[UPLOAD FAILURE] Error processing file upload on server:", e);
+      res.status(500).json({ error: "Failed to save file on server", details: e.message || String(e) });
     }
   });
 
