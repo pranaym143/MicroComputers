@@ -256,6 +256,38 @@ async function startServer() {
     }
   });
 
+  // API Route: Proxy download to bypass CORS completely and force attachment save dialog in browser
+  app.get("/api/download-proxy", async (req, res) => {
+    const fileUrl = req.query.url as string;
+    const fileName = req.query.filename as string || "certificate.pdf";
+
+    if (!fileUrl) {
+      return res.status(400).json({ error: "url parameter is required" });
+    }
+
+    try {
+      console.log(`Proxying download request for file: ${fileName} from url: ${fileUrl}`);
+      
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch remote file: ${response.statusText} (${response.status})`);
+      }
+
+      const contentType = response.headers.get("content-type") || "application/pdf";
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      res.setHeader("Content-Type", contentType);
+      // Clean filename from any unsafe characters
+      const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("Proxy download error:", err);
+      res.status(500).json({ error: "Failed to download file via proxy server", details: err.message || String(err) });
+    }
+  });
+
   // Serve static uploaded certificates
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 

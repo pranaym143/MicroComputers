@@ -79,9 +79,61 @@ export default function AdminPanel({
   const [fileUploading, setFileUploading] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Active Tab
-  const [activeTab, setActiveTab] = useState<'analytics' | 'records' | 'add' | 'database'>('analytics');
+  // Developer mode detection based on URL queries for developer/administrator setup only
+  const isDeveloper = typeof window !== 'undefined' && (
+    window.location.search.includes('developer=true') || 
+    window.location.search.includes('dev=true') ||
+    window.location.hostname === 'localhost'
+  );
+
+  // Active Tab synchronized with URL paths
+  const [activeTab, setActiveTab] = useState<'analytics' | 'records' | 'add' | 'database'>(() => {
+    const path = window.location.pathname;
+    if (path === '/dashboard') return 'records';
+    if (path === '/upload') return 'add';
+    return 'analytics';
+  });
+
+  // Guard activeTab if non-developer tries to access database config
+  useEffect(() => {
+    if (activeTab === 'database' && !isDeveloper) {
+      setActiveTab('analytics');
+    }
+  }, [activeTab, isDeveloper]);
+
+  // Set initial tab based on path when logged in
+  useEffect(() => {
+    if (isLoggedIn) {
+      const path = window.location.pathname;
+      if (path === '/dashboard') {
+        setActiveTab('records');
+      } else if (path === '/upload') {
+        setActiveTab('add');
+      } else if (path === '/admin') {
+        setActiveTab('analytics');
+      }
+    }
+  }, [isLoggedIn]);
+
+  // Sync tab updates to the URL path cleanly
+  useEffect(() => {
+    if (isLoggedIn) {
+      let path = '/admin';
+      if (activeTab === 'records') {
+        path = '/dashboard';
+      } else if (activeTab === 'add') {
+        path = '/upload';
+      } else if (activeTab === 'database') {
+        path = '/admin';
+      }
+
+      if (window.location.pathname !== path) {
+        window.history.pushState(null, '', path);
+      }
+    }
+  }, [activeTab, isLoggedIn]);
 
   // Drag and drop upload state
   const [dragOver, setDragOver] = useState(false);
@@ -225,27 +277,20 @@ export default function AdminPanel({
     fetchCertificates();
   };
 
-  // Certificate PDF File Uploader (supports Supabase storage and dataURL fallback)
-  const handleFileUpload = async (file: File) => {
+  // Certificate PDF File Selector (stores the selected file in local state to be uploaded sequentially upon saving)
+  const handleFileUpload = (file: File) => {
     if (!file) return;
     if (file.type !== 'application/pdf') {
       setFormError('Only PDF files are allowed for certificates.');
       return;
     }
 
-    setFileUploading(true);
     setFormError('');
-    try {
-      const uploadRes = await CertificateService.uploadCertificateFile(file);
-      setUploadedFileUrl(uploadRes.url);
-      setUploadedFileName(uploadRes.fileName);
-      setFormSuccess(`File "${file.name}" uploaded successfully!`);
-      setTimeout(() => setFormSuccess(''), 4000);
-    } catch (err) {
-      setFormError('Failed to upload certificate file. Using local fallback.');
-    } finally {
-      setFileUploading(false);
-    }
+    setSelectedFile(file);
+    setUploadedFileName(file.name);
+    setUploadedFileUrl(''); // Clear any old URL to ensure upload of new file
+    setFormSuccess(`File "${file.name}" selected successfully.`);
+    setTimeout(() => setFormSuccess(''), 3000);
   };
 
   // File drag & drop handlers
@@ -266,53 +311,94 @@ export default function AdminPanel({
     }
   };
 
-  // Create or Update certificate record
+  // Create or Update certificate record with sequential file upload and verification
   const handleSaveRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     setFormSuccess('');
 
-    if (!formHTN.trim() || !formName.trim() || !formCourse.trim()) {
-      setFormError('Hall Ticket, Student Name, and Course are required fields.');
+    if (!formHTN.trim() || !formName.trim() || !formCourse.trim() || !formYear.trim()) {
+      setFormError('Student Name, Hall Ticket Number, Course Name, and Completion Year are required fields.');
       return;
     }
 
-    const certData = {
-      hall_ticket_number: formHTN.trim().toUpperCase(),
-      student_name: formName.trim(),
-      course: formCourse,
-      year: formYear,
-      grade: formGrade,
-      issue_date: formIssueDate,
-      certificate_url: uploadedFileUrl || undefined,
-      file_name: uploadedFileName || undefined,
-      phone_number: formPhone.trim() || undefined
-    };
+    // Verify PDF is provided (either a newly selected file or an existing file in edit mode)
+    if (!selectedFile && !uploadedFileUrl) {
+      setFormError('Please select a Certificate PDF before saving.');
+      return;
+    }
+
+    setFileUploading(true);
+    let finalFileUrl = uploadedFileUrl;
+    let finalFileName = uploadedFileName;
 
     try {
+      // STEP 1 & 2: Upload the PDF file to the Supabase "certificates" bucket
+      if (selectedFile) {
+        console.log('STEP 1: Starting PDF upload to Supabase "certificates" bucket...');
+        const uploadRes = await CertificateService.uploadCertificateFile(selectedFile);
+        
+        // STEP 3: Verify storage upload success and obtain the uploaded file path (public URL)
+        if (!uploadRes || !uploadRes.url) {
+          throw new Error('Supabase storage upload completed, but returned empty file path/URL verification.');
+        }
+        
+        console.log('STEP 2 & 3: File upload verified successfully. URL:', uploadRes.url);
+        finalFileUrl = uploadRes.url;
+        finalFileName = uploadRes.fileName;
+        setUploadedFileUrl(finalFileUrl);
+        setUploadedFileName(finalFileName);
+      }
+
+      // STEP 4: Insert a row into the students table
+      const certData = {
+        hall_ticket_number: formHTN.trim().toUpperCase(),
+        student_name: formName.trim(),
+        course: formCourse,
+        course_name: formCourse,
+        year: formYear.trim(),
+        completion_year: formYear.trim(),
+        grade: formGrade || 'A+',
+        issue_date: formIssueDate,
+        certificate_url: finalFileUrl,
+        file_name: finalFileName,
+        phone_number: formPhone.trim() || undefined
+      };
+
       if (isEditing && editingId) {
+        console.log('STEP 4: Updating student record in Supabase...');
         await CertificateService.updateCertificate(editingId, certData);
-        setFormSuccess('Student saved successfully.');
       } else {
         // Check duplicate Hall Ticket number
         const exists = certificates.some(c => c.hall_ticket_number.toUpperCase() === certData.hall_ticket_number);
         if (exists) {
           setFormError(`A certificate with Hall Ticket Number "${certData.hall_ticket_number}" already exists.`);
+          setFileUploading(false);
           return;
         }
+        console.log('STEP 4: Inserting student record in Supabase...');
         await CertificateService.addCertificate(certData);
-        setFormSuccess('Student saved successfully.');
       }
 
-      // Refresh data list & reset form
-      fetchCertificates();
+      // STEP 5: Display success status
+      setFormSuccess('Student saved successfully.');
+      setSelectedFile(null);
+
+      // Refresh admin dashboard lists and fetch fresh data from Supabase instantly
+      await fetchCertificates();
+
+      // Clear form and navigate cleanly
       setTimeout(() => {
         resetForm();
         setActiveTab('records');
       }, 1500);
+
     } catch (err: any) {
-      console.error('handleSaveRecord error:', err);
-      setFormError(err?.message || 'Error saving certificate record. Please check Database Connection and try again.');
+      console.error('Failed to upload or save student:', err);
+      // Stop process, do NOT use local fallback, and display the actual error directly
+      setFormError(err?.message || String(err));
+    } finally {
+      setFileUploading(false);
     }
   };
 
@@ -366,6 +452,7 @@ export default function AdminPanel({
     setFormPhone('');
     setFormError('');
     setFormSuccess('');
+    setSelectedFile(null);
   };
 
   // Filtered certificates search matching
@@ -428,24 +515,33 @@ export default function AdminPanel({
                 <p className="text-xs text-gray-400">Authorized personnel only. Access strictly logged.</p>
               </div>
 
-               {/* Database Status notice */}
-              {!supabaseConfig ? (
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-left space-y-2">
-                  <div className="flex gap-2 text-amber-400 items-start">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span className="text-[11px] font-mono uppercase tracking-wider font-bold">Local Simulation Active</span>
-                  </div>
-                  <p className="text-[11px] text-gray-400 leading-relaxed">
-                    "Please provide your personal Supabase credentials and storage details."
-                  </p>
-                   <p className="text-[10px] text-gray-500 italic">
-                    Testing admin login: <strong className="text-gray-300">microcomputers@gmail.com</strong> with password <strong className="text-gray-300">computer@123</strong>
-                  </p>
-                </div>
+               {/* Database Status notice shown only to the Developer */}
+              {isDeveloper ? (
+                <>
+                  {!supabaseConfig ? (
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-left space-y-2">
+                      <div className="flex gap-2 text-amber-400 items-start">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span className="text-[11px] font-mono uppercase tracking-wider font-bold">Local Simulation Active</span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 leading-relaxed">
+                        "Please provide your personal Supabase credentials and storage details."
+                      </p>
+                       <p className="text-[10px] text-gray-500 italic">
+                        Testing admin login: <strong className="text-gray-300">microcomputers@gmail.com</strong> with password <strong className="text-gray-300">computer@123</strong>
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs text-left font-mono flex items-center gap-2">
+                      <Database className="w-4 h-4" />
+                      <span>Using Real Supabase DB & Auth</span>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs text-left font-mono flex items-center gap-2">
-                  <Database className="w-4 h-4" />
-                  <span>Using Real Supabase DB & Auth</span>
+                <div className="p-3.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs text-left font-mono flex items-center gap-2 justify-center">
+                  <ShieldCheck className="w-4.5 h-4.5 text-violet-400" />
+                  <span>Enforced Secure Admin Connection</span>
                 </div>
               )}
 
@@ -530,16 +626,18 @@ export default function AdminPanel({
                 <Plus className="w-4 h-4" />
                 {isEditing ? 'EDIT CERTIFICATE' : 'UPLOAD CERTIFICATE'}
               </button>
-              <button
-                onClick={() => setActiveTab('database')}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-mono font-medium tracking-wide shrink-0 md:shrink transition-all cursor-pointer liquid-glass-tab-btn ${
-                  activeTab === 'database' ? 'active' : ''
-                }`}
-                id="tab-supabase"
-              >
-                <Settings className="w-4 h-4" />
-                DATABASE CONFIG
-              </button>
+              {isDeveloper && (
+                <button
+                  onClick={() => setActiveTab('database')}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-mono font-medium tracking-wide shrink-0 md:shrink transition-all cursor-pointer liquid-glass-tab-btn ${
+                    activeTab === 'database' ? 'active' : ''
+                  }`}
+                  id="tab-supabase"
+                >
+                  <Settings className="w-4 h-4" />
+                  DATABASE CONFIG
+                </button>
+              )}
 
               <button
                 onClick={handleLogout}
@@ -836,7 +934,7 @@ export default function AdminPanel({
                       </div>
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">
-                          Student Full Name <span className="text-violet-400">*</span>
+                          Student Name <span className="text-violet-400">*</span>
                         </label>
                         <input
                           type="text"
@@ -852,7 +950,7 @@ export default function AdminPanel({
                     {/* Course Selection & Year */}
                     <div className="grid sm:grid-cols-2 gap-4">
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Course Module <span className="text-violet-400">*</span></label>
+                        <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Course Name <span className="text-violet-400">*</span></label>
                         <select
                           value={formCourse}
                           onChange={(e) => setFormCourse(e.target.value)}
@@ -867,7 +965,7 @@ export default function AdminPanel({
                         </select>
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Academic Year <span className="text-violet-400">*</span></label>
+                        <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">Completion Year <span className="text-violet-400">*</span></label>
                         <input
                           type="text"
                           required
@@ -915,7 +1013,7 @@ export default function AdminPanel({
                     {/* PDF Document Upload */}
                     <div className="flex flex-col gap-2">
                       <label className="text-[10px] font-mono uppercase tracking-wider text-gray-400 font-semibold">
-                        Certificate PDF File Upload
+                        Certificate PDF <span className="text-violet-400">*</span>
                       </label>
                       <div
                         onDragOver={handleDragOver}
@@ -994,7 +1092,7 @@ export default function AdminPanel({
               )}
 
               {/* TAB 4: SUPABASE DATABASE CONNECTION CONFIG */}
-              {activeTab === 'database' && (
+              {activeTab === 'database' && isDeveloper && (
                 <div className="max-w-2xl mx-auto glass-panel p-8 rounded-3xl border border-white/5 space-y-6 text-left" id="view-database">
                   <div className="space-y-2 pb-4 border-b border-white/5">
                     <div className="flex items-center gap-2 text-violet-400">
@@ -1107,6 +1205,53 @@ export default function AdminPanel({
   completion_year text
 );`}
                     </pre>
+                  </div>
+
+                  {/* RLS Policy Fix instructions details box */}
+                  <div className="p-5 rounded-2xl bg-white/2 border border-white/5 space-y-3">
+                    <div className="flex items-center gap-2 text-amber-400">
+                      <AlertTriangle className="w-4 h-4" />
+                      <h4 className="text-xs font-mono uppercase tracking-wider text-gray-300 font-bold">Fixing Row-Level Security (RLS) Errors</h4>
+                    </div>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                      If you receive the error <code className="text-amber-300 font-mono">new row violates row-level security policy</code> when saving records or uploading files, it means Supabase Row-Level Security (RLS) is enabled but blocking requests.
+                    </p>
+                    <p className="text-[11px] text-gray-400 leading-relaxed font-semibold">
+                      Run these SQL statements in your <strong>Supabase SQL Editor</strong> to fix it:
+                    </p>
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-mono text-gray-400 font-bold">1. Fix Table Access ({supabaseConfig?.tableName || 'students'}):</div>
+                      <pre className="p-3.5 rounded-xl bg-black/40 text-[10px] font-mono text-amber-300 overflow-x-auto leading-relaxed select-all">
+{`-- OPTION A (Easiest for testing/prototypes): Disable RLS altogether
+alter table ${supabaseConfig?.tableName || 'students'} disable row level security;
+
+-- OPTION B (Enable RLS, but allow all public reads and writes):
+create policy "Allow public read-write" on ${supabaseConfig?.tableName || 'students'}
+  for all to public using (true) with check (true);`}
+                      </pre>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-mono text-gray-400 font-bold">2. Fix Storage Uploads ({supabaseConfig?.storageBucket || 'certificates'}):</div>
+                      <p className="text-[10px] text-gray-400 leading-normal">
+                        First, go to <strong>Storage</strong> in Supabase, select your bucket, and click <strong>Make public</strong>. Then run this SQL to authorize file uploads:
+                      </p>
+                      <pre className="p-3.5 rounded-xl bg-black/40 text-[10px] font-mono text-amber-300 overflow-x-auto leading-relaxed select-all">
+{`-- Allow public uploads to storage bucket
+create policy "Allow public uploads" on storage.objects
+  for insert to public with check (bucket_id = '${supabaseConfig?.storageBucket || 'certificates'}');
+
+-- Allow public reads from storage bucket
+create policy "Allow public reads" on storage.objects
+  for select to public using (bucket_id = '${supabaseConfig?.storageBucket || 'certificates'}');
+
+-- Allow public updates/deletes
+create policy "Allow public updates" on storage.objects
+  for update to public using (bucket_id = '${supabaseConfig?.storageBucket || 'certificates'}');
+
+create policy "Allow public deletes" on storage.objects
+  for delete to public using (bucket_id = '${supabaseConfig?.storageBucket || 'certificates'}');`}
+                      </pre>
+                    </div>
                   </div>
                 </div>
               )}

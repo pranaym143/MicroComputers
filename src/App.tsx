@@ -30,6 +30,12 @@ export default function App() {
           const sessionData = await sessionRes.json();
           setIsAdminLoggedIn(!!sessionData.loggedIn);
         }
+
+        // Direct pathname access routing on load
+        const adminPaths = ['/admin', '/dashboard', '/upload'];
+        if (adminPaths.includes(window.location.pathname)) {
+          setIsAdminOpen(true);
+        }
       } catch (err) {
         console.error('App initialization failed:', err);
       } finally {
@@ -37,6 +43,20 @@ export default function App() {
       }
     }
     initializeApp();
+  }, []);
+
+  // Listen to popstate for native back/forward browser navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const adminPaths = ['/admin', '/dashboard', '/upload'];
+      if (adminPaths.includes(window.location.pathname)) {
+        setIsAdminOpen(true);
+      } else {
+        setIsAdminOpen(false);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   // Scroll Section Spy
@@ -112,7 +132,10 @@ export default function App() {
       <Navbar
         activeSection={activeSection}
         onNavigate={navigateToSection}
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onOpenAdmin={() => {
+          setIsAdminOpen(true);
+          window.history.pushState(null, '', '/admin');
+        }}
         isAdminLoggedIn={isAdminLoggedIn}
         isSupabaseConnected={isSupabaseConnected}
       />
@@ -150,6 +173,7 @@ export default function App() {
           onClose={() => {
             setIsAdminOpen(false);
             setIsAdminLoggedIn(false);
+            window.history.pushState(null, '', '/');
             fetch('/api/admin/logout', { method: 'POST' }).catch(() => {});
           }}
           onLoginStateChange={(isLoggedIn) => setIsAdminLoggedIn(isLoggedIn)}

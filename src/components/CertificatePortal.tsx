@@ -11,6 +11,8 @@ export default function CertificatePortal() {
   const [searched, setSearched] = useState(false);
   const [certificate, setCertificate] = useState<StudentCertificate | null>(null);
   const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +52,31 @@ export default function CertificatePortal() {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadFile = async (url: string, fileName: string) => {
+    if (!url) return;
+    setDownloading(true);
+    setDownloadError('');
+    try {
+      console.log('Initiating programmatic PDF download via secure proxy...', url);
+      const cleanFileName = fileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
+      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(cleanFileName)}`;
+      
+      const link = document.createElement('a');
+      link.href = proxyUrl;
+      link.download = cleanFileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      console.error('Error downloading certificate via proxy:', err);
+      const cleanFileName = fileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
+      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(cleanFileName)}`;
+      window.open(proxyUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setTimeout(() => setDownloading(false), 600);
+    }
   };
 
   return (
@@ -301,37 +328,55 @@ export default function CertificatePortal() {
                   </div>
 
                   {/* Actions buttons */}
-                  <div className="flex flex-wrap gap-4 justify-center">
-                    <button
-                      onClick={handlePrint}
-                      className="glass-button px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer"
-                      id="btn-print-certificate"
-                    >
-                      <Printer className="w-4 h-4 text-violet-400" />
-                      PRINT / SAVE AS PDF
-                    </button>
-
-                    {certificate.certificate_url ? (
-                      <a
-                        href={certificate.certificate_url}
-                        download={certificate.file_name || `certificate-${certificate.hall_ticket_number}.pdf`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="glass-button-primary px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer"
-                        id="btn-download-pdf"
-                      >
-                        <Download className="w-4 h-4" />
-                        DOWNLOAD UPLOADED PDF
-                      </a>
-                    ) : (
+                  <div className="flex flex-col gap-4 items-center justify-center">
+                    <div className="flex flex-wrap gap-4 justify-center">
                       <button
                         onClick={handlePrint}
-                        className="glass-button-primary px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer opacity-90 hover:opacity-100"
-                        id="btn-download-pdf-fallback"
+                        className="glass-button px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer"
+                        id="btn-print-certificate"
                       >
-                        <Download className="w-4 h-4" />
-                        DOWNLOAD DIGITAL COPY
+                        <Printer className="w-4 h-4 text-violet-400" />
+                        PRINT / SAVE AS PDF
                       </button>
+
+                      {certificate.certificate_url ? (
+                        <button
+                          onClick={() => handleDownloadFile(
+                            certificate.certificate_url!,
+                            certificate.file_name || `certificate-${certificate.hall_ticket_number}.pdf`
+                          )}
+                          disabled={downloading}
+                          className="glass-button-primary px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                          id="btn-download-pdf"
+                        >
+                          {downloading ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              DOWNLOADING...
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-4 h-4" />
+                              DOWNLOAD UPLOADED PDF
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePrint}
+                          className="glass-button-primary px-6 py-3.5 rounded-xl text-xs font-mono font-semibold tracking-wider text-white flex items-center gap-2 cursor-pointer opacity-90 hover:opacity-100"
+                          id="btn-download-pdf-fallback"
+                        >
+                          <Download className="w-4 h-4" />
+                          DOWNLOAD DIGITAL COPY
+                        </button>
+                      )}
+                    </div>
+
+                    {downloadError && (
+                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs text-center font-mono max-w-md mx-auto">
+                        {downloadError}
+                      </div>
                     )}
                   </div>
                 </>

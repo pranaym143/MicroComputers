@@ -212,10 +212,10 @@ export class CertificateService {
             id: match.id || match.hall_ticket_number,
             hall_ticket_number: match.hall_ticket_number,
             student_name: match.student_name,
-            course: match.course_name || match.course || '',
-            year: match.completion_year || match.year || '',
-            grade: match.grade || 'A+',
-            issue_date: match.issue_date || '',
+            course: match.course_name || '',
+            year: match.completion_year || '',
+            grade: 'A+',
+            issue_date: '',
             certificate_url: match.certificate_url,
             file_name: match.file_name,
             phone_number: match.phone_number,
@@ -259,10 +259,10 @@ export class CertificateService {
           id: match.id || match.hall_ticket_number,
           hall_ticket_number: match.hall_ticket_number,
           student_name: match.student_name,
-          course: match.course_name || match.course || '',
-          year: match.completion_year || match.year || '',
-          grade: match.grade || 'A+',
-          issue_date: match.issue_date || '',
+          course: match.course_name || '',
+          year: match.completion_year || '',
+          grade: 'A+',
+          issue_date: '',
           certificate_url: match.certificate_url,
           file_name: match.file_name,
           phone_number: match.phone_number,
@@ -278,105 +278,64 @@ export class CertificateService {
     throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
   }
 
-  // Add a certificate record with retry and explicit post-save confirmation check
+  // Add a certificate record with explicit post-save confirmation check and no local fallback
   static async addCertificate(cert: Omit<StudentCertificate, 'id'>): Promise<StudentCertificate> {
-    const newId = `cert-${Date.now()}`;
-    const newCert: StudentCertificate = { ...cert, id: newId };
-
     const client = getSupabaseClient();
     if (!client) {
       throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
     }
 
     try {
-      // Build a comprehensive payload mapping to support both schema styles!
-      const payload: any = {
-        id: newCert.id,
-        hall_ticket_number: newCert.hall_ticket_number,
-        student_name: newCert.student_name,
-        course: newCert.course,
-        year: newCert.year,
-        grade: newCert.grade || null,
-        issue_date: newCert.issue_date || null,
-        certificate_url: newCert.certificate_url || null,
-        file_name: newCert.file_name || null,
-        phone_number: (newCert as any).phone_number || null,
-        course_name: newCert.course,
-        completion_year: newCert.year,
+      const payload = {
+        hall_ticket_number: cert.hall_ticket_number.trim().toUpperCase(),
+        student_name: cert.student_name.trim(),
+        course_name: cert.course_name || cert.course,
+        completion_year: cert.completion_year || cert.year,
+        phone_number: cert.phone_number || null,
+        certificate_url: cert.certificate_url || null,
       };
 
-      let attempt = 0;
-      let lastErr: any = null;
       const tableName = CertificateService.getTableName();
+      console.log(`Attempting direct insert into ${tableName}...`, payload);
+      
+      const { error } = await client
+        .from(tableName)
+        .insert([payload]);
 
-      while (attempt < 5) {
-        console.log(`Attempting insert into ${tableName} (attempt ${attempt + 1})...`, payload);
-        const { error } = await client
-          .from(tableName)
-          .insert([payload]);
-
-        if (!error) {
-          CertificateService.lastError = null;
-
-          // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists!
-          console.log(`Querying back from Supabase to confirm row exists in ${tableName}...`);
-          const { data: confirmData, error: confirmError } = await client
-            .from(tableName)
-            .select('*')
-            .eq('hall_ticket_number', payload.hall_ticket_number);
-
-          if (confirmError || !confirmData || confirmData.length === 0) {
-            throw new Error(`Row confirmation failed: Save returned success but the record with Hall Ticket Number "${payload.hall_ticket_number}" could not be found in Supabase.`);
-          }
-
-          console.log('Successfully confirmed student row exists in Supabase:', confirmData[0]);
-          const saved = confirmData[0];
-
-          return {
-            id: saved.id || saved.hall_ticket_number,
-            hall_ticket_number: saved.hall_ticket_number,
-            student_name: saved.student_name,
-            course: saved.course_name || saved.course || '',
-            year: saved.completion_year || saved.year || '',
-            grade: saved.grade || 'A+',
-            issue_date: saved.issue_date || '',
-            certificate_url: saved.certificate_url,
-            file_name: saved.file_name,
-            phone_number: saved.phone_number,
-            course_name: saved.course_name,
-            completion_year: saved.completion_year,
-          };
-        }
-
-        lastErr = error;
-        const errMsg = (error.message || '').toLowerCase();
-        const errDetails = (error.details || '').toLowerCase();
-
-        // Check if there is a column error and strip unknown columns dynamically
-        const match = errMsg.match(/column "([^"]+)" of relation/) || 
-                      errDetails.match(/column "([^"]+)" of relation/) || 
-                      errMsg.match(/column "([^"]+)" does not exist/);
-
-        if (match && match[1]) {
-          const colToRemove = match[1];
-          console.log(`Column "${colToRemove}" does not exist in schema. Stripping and retrying...`);
-          delete payload[colToRemove];
-          attempt++;
-        } else if (errMsg.includes('phone_number') || errDetails.includes('phone_number')) {
-          delete payload.phone_number;
-          attempt++;
-        } else if (errMsg.includes('course_name') || errDetails.includes('course_name')) {
-          delete payload.course_name;
-          attempt++;
-        } else if (errMsg.includes('completion_year') || errDetails.includes('completion_year')) {
-          delete payload.completion_year;
-          attempt++;
-        } else {
-          break;
-        }
+      if (error) {
+        throw error;
       }
 
-      throw lastErr || new Error('Failed to insert certificate into Supabase.');
+      CertificateService.lastError = null;
+
+      // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists!
+      console.log(`Querying back from Supabase to confirm row exists in ${tableName}...`);
+      const { data: confirmData, error: confirmError } = await client
+        .from(tableName)
+        .select('*')
+        .eq('hall_ticket_number', payload.hall_ticket_number);
+
+      if (confirmError || !confirmData || confirmData.length === 0) {
+        throw new Error(`Row confirmation failed: Save returned success but the record with Hall Ticket Number "${payload.hall_ticket_number}" could not be found in Supabase.`);
+      }
+
+      console.log('Successfully confirmed student row exists in Supabase:', confirmData[0]);
+      const saved = confirmData[0];
+
+      return {
+        id: saved.id || saved.hall_ticket_number,
+        hall_ticket_number: saved.hall_ticket_number,
+        student_name: saved.student_name,
+        course: saved.course_name || '',
+        year: saved.completion_year || '',
+        grade: 'A+',
+        issue_date: '',
+        certificate_url: saved.certificate_url,
+        file_name: saved.file_name,
+        phone_number: saved.phone_number,
+        course_name: saved.course_name,
+        completion_year: saved.completion_year,
+      };
     } catch (err: any) {
       console.error('Real Supabase save error:', err);
       CertificateService.lastError = err;
@@ -384,7 +343,7 @@ export class CertificateService {
     }
   }
 
-  // Update a certificate record with retry and post-update confirmation check
+  // Update a certificate record with post-update confirmation check and no local fallback
   static async updateCertificate(id: string, updated: Partial<StudentCertificate>): Promise<StudentCertificate | null> {
     const client = getSupabaseClient();
     if (!client) {
@@ -392,88 +351,76 @@ export class CertificateService {
     }
 
     try {
-      const payload: any = { ...updated };
-      
-      if (updated.course !== undefined) {
-        payload.course_name = updated.course;
+      const payload: any = {};
+      if (updated.hall_ticket_number !== undefined) {
+        payload.hall_ticket_number = updated.hall_ticket_number.trim().toUpperCase();
       }
-      if (updated.year !== undefined) {
-        payload.completion_year = updated.year;
+      if (updated.student_name !== undefined) {
+        payload.student_name = updated.student_name.trim();
+      }
+      if (updated.course_name !== undefined || updated.course !== undefined) {
+        payload.course_name = updated.course_name || updated.course;
+      }
+      if (updated.completion_year !== undefined || updated.year !== undefined) {
+        payload.completion_year = updated.completion_year || updated.year;
+      }
+      if (updated.phone_number !== undefined) {
+        payload.phone_number = updated.phone_number || null;
+      }
+      if (updated.certificate_url !== undefined) {
+        payload.certificate_url = updated.certificate_url || null;
       }
 
-      let attempt = 0;
-      let lastErr: any = null;
+      const htn = updated.hall_ticket_number || id;
       const tableName = CertificateService.getTableName();
+      console.log(`Attempting direct update of ${id} in ${tableName}...`, payload);
 
-      while (attempt < 5) {
-        console.log(`Attempting update of ${id} in ${tableName} (attempt ${attempt + 1})...`, payload);
-        const htn = updated.hall_ticket_number || id;
-        const { error } = await client
-          .from(tableName)
-          .update(payload)
-          .or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
-
-        if (!error) {
-          CertificateService.lastError = null;
-
-          // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists and is updated!
-          console.log(`Querying back from Supabase to confirm updated row exists in ${tableName}...`);
-          const { data: confirmData, error: confirmError } = await client
-            .from(tableName)
-            .select('*')
-            .or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
-
-          if (confirmError || !confirmData || confirmData.length === 0) {
-            throw new Error(`Row confirmation failed: Update returned success but the record could not be found in Supabase.`);
-          }
-
-          console.log('Successfully confirmed updated student row exists in Supabase:', confirmData[0]);
-          const saved = confirmData[0];
-
-          return {
-            id: saved.id || saved.hall_ticket_number,
-            hall_ticket_number: saved.hall_ticket_number,
-            student_name: saved.student_name,
-            course: saved.course_name || saved.course || '',
-            year: saved.completion_year || saved.year || '',
-            grade: saved.grade || 'A+',
-            issue_date: saved.issue_date || '',
-            certificate_url: saved.certificate_url,
-            file_name: saved.file_name,
-            phone_number: saved.phone_number,
-            course_name: saved.course_name,
-            completion_year: saved.completion_year,
-          };
-        }
-
-        lastErr = error;
-        const errMsg = (error.message || '').toLowerCase();
-        const errDetails = (error.details || '').toLowerCase();
-
-        const match = errMsg.match(/column "([^"]+)" of relation/) || 
-                      errDetails.match(/column "([^"]+)" of relation/) || 
-                      errMsg.match(/column "([^"]+)" does not exist/);
-
-        if (match && match[1]) {
-          const colToRemove = match[1];
-          console.log(`Column "${colToRemove}" does not exist in schema. Stripping and retrying...`);
-          delete payload[colToRemove];
-          attempt++;
-        } else if (errMsg.includes('phone_number') || errDetails.includes('phone_number')) {
-          delete payload.phone_number;
-          attempt++;
-        } else if (errMsg.includes('course_name') || errDetails.includes('course_name')) {
-          delete payload.course_name;
-          attempt++;
-        } else if (errMsg.includes('completion_year') || errDetails.includes('completion_year')) {
-          delete payload.completion_year;
-          attempt++;
-        } else {
-          break;
-        }
+      let query = client.from(tableName).update(payload);
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(id)) {
+        query = query.or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
+      } else {
+        query = query.eq('hall_ticket_number', id);
       }
 
-      throw lastErr || new Error('Failed to update student in Supabase.');
+      const { error } = await query;
+      if (error) {
+        throw error;
+      }
+
+      CertificateService.lastError = null;
+
+      // CONFIRMATION STEP: Fetch row from Supabase to verify that it actually exists and is updated!
+      console.log(`Querying back from Supabase to confirm updated row exists in ${tableName}...`);
+      let confirmQuery = client.from(tableName).select('*');
+      if (uuidRegex.test(id)) {
+        confirmQuery = confirmQuery.or(`id.eq."${id}",hall_ticket_number.eq."${htn}"`);
+      } else {
+        confirmQuery = confirmQuery.eq('hall_ticket_number', htn);
+      }
+
+      const { data: confirmData, error: confirmError } = await confirmQuery;
+      if (confirmError || !confirmData || confirmData.length === 0) {
+        throw new Error(`Row confirmation failed: Update returned success but the record could not be found in Supabase.`);
+      }
+
+      console.log('Successfully confirmed updated student row exists in Supabase:', confirmData[0]);
+      const saved = confirmData[0];
+
+      return {
+        id: saved.id || saved.hall_ticket_number,
+        hall_ticket_number: saved.hall_ticket_number,
+        student_name: saved.student_name,
+        course: saved.course_name || '',
+        year: saved.completion_year || '',
+        grade: 'A+',
+        issue_date: '',
+        certificate_url: saved.certificate_url,
+        file_name: saved.file_name,
+        phone_number: saved.phone_number,
+        course_name: saved.course_name,
+        completion_year: saved.completion_year,
+      };
     } catch (err: any) {
       console.error('Real Supabase update error:', err);
       CertificateService.lastError = err;
@@ -490,11 +437,16 @@ export class CertificateService {
 
     try {
       const tableName = CertificateService.getTableName();
-      const { error } = await client
-        .from(tableName)
-        .delete()
-        .or(`id.eq."${id}",hall_ticket_number.eq."${id}"`);
+      let query = client.from(tableName).delete();
+      
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(id)) {
+        query = query.or(`id.eq."${id}",hall_ticket_number.eq."${id}"`);
+      } else {
+        query = query.eq('hall_ticket_number', id);
+      }
 
+      const { error } = await query;
       if (error) throw error;
       CertificateService.lastError = null;
       return true;
@@ -515,26 +467,37 @@ export class CertificateService {
     const fileExt = file.name.split('.').pop() || 'pdf';
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}.${fileExt}`;
 
-    try {
-      const config = getSavedSupabaseConfig()!;
-      const bucketName = config.storageBucket || 'certificates';
-      const { error } = await client.storage
-        .from(bucketName)
-        .upload(fileName, file);
+    const config = getSavedSupabaseConfig()!;
+    const bucketName = config.storageBucket || 'certificates';
 
-      if (error) throw error;
+    console.log(`Uploading file ${file.name} to Supabase bucket "${bucketName}"...`);
+    const { error, data: uploadData } = await client.storage
+      .from(bucketName)
+      .upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
 
-      const { data } = client.storage
-        .from(bucketName)
-        .getPublicUrl(fileName);
-
-      return {
-        url: data.publicUrl,
-        fileName: file.name
-      };
-    } catch (err: any) {
-      console.error('Real Supabase storage upload error:', err);
-      throw err;
+    if (error) {
+      console.error('Real Supabase storage upload error:', error);
+      throw error;
     }
+
+    if (!uploadData) {
+      throw new Error('Supabase upload completed but no data return was verified.');
+    }
+
+    const { data } = client.storage
+      .from(bucketName)
+      .getPublicUrl(fileName);
+
+    if (!data || !data.publicUrl) {
+      throw new Error('Failed to obtain the public URL for the uploaded file.');
+    }
+
+    return {
+      url: data.publicUrl,
+      fileName: file.name
+    };
   }
 }
