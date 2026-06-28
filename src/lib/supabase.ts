@@ -556,4 +556,97 @@ export class CertificateService {
       throw err;
     }
   }
+
+  // Verify file exists, generate signed URL and download using Supabase Storage download methods
+  static async downloadCertificateFile(url: string): Promise<{ blob: Blob; signedUrl: string; fileName: string }> {
+    const client = getSupabaseClient();
+    if (!client) {
+      throw new Error('Supabase client is not initialized. Please configure Supabase in Database Settings.');
+    }
+
+    const config = getSavedSupabaseConfig()!;
+    const bucketName = config.storageBucket || 'certificates';
+    const filePath = getStoragePathFromUrl(url, bucketName);
+
+    if (!filePath) {
+      throw new Error('Certificate not found.');
+    }
+
+    // 1. Verify file exists in Supabase storage bucket
+    const { data: fileList, error: listError } = await client.storage
+      .from(bucketName)
+      .list('', {
+        search: filePath
+      });
+
+    if (listError) {
+      console.error('[STORAGE DOWNLOAD] List error:', listError);
+    }
+
+    const fileExists = fileList && fileList.some(f => f.name === filePath);
+    if (!fileExists) {
+      console.warn(`[STORAGE DOWNLOAD] File ${filePath} not found in bucket ${bucketName}`);
+      throw new Error('Certificate not found.');
+    }
+
+    // 2. Generate valid signed URL to refresh/validate access and trigger download
+    console.log('[STORAGE DOWNLOAD] Generating signed URL to refresh expired URLs automatically...');
+    const { data: signedData, error: signedError } = await client.storage
+      .from(bucketName)
+      .createSignedUrl(filePath, 3600); // 1 hour expiration
+
+    if (signedError || !signedData || !signedData.signedUrl) {
+      console.error('[STORAGE DOWNLOAD] Signed URL generation failed:', signedError);
+      throw new Error('Certificate download failed.');
+    }
+
+    console.log('[STORAGE DOWNLOAD] Signed URL generated successfully. Executing official Supabase Storage download method...');
+
+    // 3. Use official Supabase Storage download method (which handles authentication correctly)
+    const { data: blob, error: downloadError } = await client.storage
+      .from(bucketName)
+      .download(filePath);
+
+    if (downloadError || !blob) {
+      console.error('[STORAGE DOWNLOAD] Supabase Storage download method failed:', downloadError);
+      throw new Error('Certificate download failed.');
+    }
+
+    return {
+      blob,
+      signedUrl: signedData.signedUrl,
+      fileName: filePath
+    };
+  }
+}
+
+// Extract file path inside the bucket from any Supabase storage URL
+export function getStoragePathFromUrl(url: string, bucketName: string): string | null {
+  if (!url) return null;
+  try {
+    const decodedUrl = decodeURIComponent(url);
+    const bucketMarker = `/${bucketName}/`;
+    const markerIndex = decodedUrl.indexOf(bucketMarker);
+    if (markerIndex !== -1) {
+      return decodedUrl.substring(markerIndex + bucketMarker.length);
+    }
+    
+    // If it's a URL but doesn't have the bucket marker, try parsing the pathname
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      const parsed = new URL(url);
+      const pathParts = parsed.pathname.split('/');
+      const bIndex = pathParts.indexOf(bucketName);
+      if (bIndex !== -1 && bIndex < pathParts.length - 1) {
+        return pathParts.slice(bIndex + 1).join('/');
+      }
+    }
+    
+    // Fallback if URL is just a file name
+    if (!url.startsWith('http')) {
+      return url;
+    }
+  } catch (e) {
+    console.error('Error parsing storage path from URL:', e);
+  }
+  return null;
 }

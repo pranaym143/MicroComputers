@@ -24,17 +24,17 @@ export default function App() {
         await initializeConfigAndCertificates();
         setIsSupabaseConnected(!!getSavedSupabaseConfig());
 
-        // Fetch session from server
-        const sessionRes = await fetch('/api/admin/session');
+        // Fetch session from server with local token headers fallback
+        const token = localStorage.getItem('admin_session') || '';
+        const sessionRes = await fetch('/api/admin/session', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Admin-Session': token
+          }
+        });
         if (sessionRes.ok) {
           const sessionData = await safeParseJson(sessionRes);
           setIsAdminLoggedIn(!!sessionData.loggedIn);
-        }
-
-        // Direct pathname access routing on load
-        const adminPaths = ['/admin', '/dashboard', '/upload'];
-        if (adminPaths.includes(window.location.pathname)) {
-          setIsAdminOpen(true);
         }
       } catch (err) {
         console.error('App initialization failed:', err);
@@ -45,11 +45,43 @@ export default function App() {
     initializeApp();
   }, []);
 
+  // Handle path access and redirection of protected routes
+  useEffect(() => {
+    const checkRedirect = () => {
+      const path = window.location.pathname;
+      const protectedPaths = ['/admin', '/dashboard', '/upload', '/students'];
+      
+      if (protectedPaths.includes(path)) {
+        if (!isAdminLoggedIn) {
+          // Redirect unauthenticated users to /admin-login
+          window.history.replaceState(null, '', '/admin-login');
+          setIsAdminOpen(true);
+        } else {
+          setIsAdminOpen(true);
+        }
+      } else if (path === '/admin-login') {
+        setIsAdminOpen(true);
+      } else {
+        if (!isAdminLoggedIn) {
+          setIsAdminOpen(false);
+        }
+      }
+    };
+
+    if (!isLoadingApp) {
+      checkRedirect();
+    }
+  }, [isAdminLoggedIn, isLoadingApp]);
+
   // Listen to popstate for native back/forward browser navigation
   useEffect(() => {
     const handlePopState = () => {
-      const adminPaths = ['/admin', '/dashboard', '/upload'];
-      if (adminPaths.includes(window.location.pathname)) {
+      const path = window.location.pathname;
+      const protectedPaths = ['/admin', '/dashboard', '/upload', '/students', '/admin-login'];
+      if (protectedPaths.includes(path)) {
+        if (!isAdminLoggedIn && path !== '/admin-login') {
+          window.history.replaceState(null, '', '/admin-login');
+        }
         setIsAdminOpen(true);
       } else {
         setIsAdminOpen(false);
@@ -57,7 +89,7 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [isAdminLoggedIn]);
 
   // Scroll Section Spy
   useEffect(() => {
@@ -174,7 +206,15 @@ export default function App() {
             setIsAdminOpen(false);
             setIsAdminLoggedIn(false);
             window.history.pushState(null, '', '/');
-            fetch('/api/admin/logout', { method: 'POST' }).catch(() => {});
+            const token = localStorage.getItem('admin_session') || '';
+            fetch('/api/admin/logout', { 
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'X-Admin-Session': token
+              }
+            }).catch(() => {});
+            localStorage.removeItem('admin_session');
           }}
           onLoginStateChange={(isLoggedIn) => setIsAdminLoggedIn(isLoggedIn)}
           onSupabaseStateChange={(isConnected) => setIsSupabaseConnected(isConnected)}

@@ -147,13 +147,22 @@ export default function AdminPanel({
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const res = await fetch('/api/admin/session');
+        const token = localStorage.getItem('admin_session') || '';
+        const res = await fetch('/api/admin/session', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Admin-Session': token
+          }
+        });
         if (res.ok) {
           const data = await safeParseJson(res);
           if (data.loggedIn) {
             setIsLoggedIn(true);
             onLoginStateChange(true);
             fetchCertificates();
+          } else {
+            setIsLoggedIn(false);
+            onLoginStateChange(false);
           }
         }
       } catch (err) {
@@ -209,15 +218,18 @@ export default function AdminPanel({
       });
 
       if (res.ok) {
+        const data = await safeParseJson(res);
+        const token = data.token || 'active';
+        localStorage.setItem('admin_session', token);
         setIsLoggedIn(true);
         onLoginStateChange(true);
         fetchCertificates();
       } else {
         const errData = await safeParseJson(res);
-        throw new Error(errData.error || 'Invalid Admin Gmail or Password.');
+        throw new Error(errData.error || 'Invalid email or password.');
       }
     } catch (err: any) {
-      setLoginError(err.message || 'Gmail Authentication failed. Please check your credentials.');
+      setLoginError(err.message || 'Invalid email or password.');
     } finally {
       setLoginLoading(false);
     }
@@ -226,10 +238,18 @@ export default function AdminPanel({
   // Logout handler
   const handleLogout = async () => {
     try {
-      await fetch('/api/admin/logout', { method: 'POST' });
+      const token = localStorage.getItem('admin_session') || '';
+      await fetch('/api/admin/logout', { 
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Admin-Session': token
+        }
+      });
     } catch (e) {
       console.error('Logout request failed:', e);
     }
+    localStorage.removeItem('admin_session');
     const client = getSupabaseClient();
     if (client) {
       try {

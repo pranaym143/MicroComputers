@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Search, Award, Download, Printer, RefreshCw, Eye, AlertCircle, Sparkles, ShieldCheck } from 'lucide-react';
-import { CertificateService } from '../lib/supabase';
+import { CertificateService, getStoragePathFromUrl } from '../lib/supabase';
 import { StudentCertificate } from '../types';
 
 export default function CertificatePortal() {
@@ -59,9 +59,12 @@ export default function CertificatePortal() {
     setDownloading(true);
     setDownloadError('');
     try {
-      console.log('Initiating programmatic PDF download via secure proxy...', url);
-      const cleanFileName = fileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
-      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(cleanFileName)}`;
+      console.log('Verifying and fetching certificate file from Supabase storage...', url);
+      const { blob, signedUrl, fileName: serverFileName } = await CertificateService.downloadCertificateFile(url);
+      
+      const cleanFileName = fileName || serverFileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
+      console.log('Initiating secure proxy download to bypass browser restrictions and force saving...');
+      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(signedUrl)}&filename=${encodeURIComponent(cleanFileName)}`;
       
       const link = document.createElement('a');
       link.href = proxyUrl;
@@ -70,10 +73,12 @@ export default function CertificatePortal() {
       link.click();
       document.body.removeChild(link);
     } catch (err: any) {
-      console.error('Error downloading certificate via proxy:', err);
-      const cleanFileName = fileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
-      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(cleanFileName)}`;
-      window.open(proxyUrl, '_blank', 'noopener,noreferrer');
+      console.error('Error downloading certificate:', err);
+      if (err.message === 'Certificate not found.') {
+        setDownloadError('Certificate not found.');
+      } else {
+        setDownloadError('Certificate download failed.');
+      }
     } finally {
       setTimeout(() => setDownloading(false), 600);
     }

@@ -124,7 +124,11 @@ async function startServer() {
       return acc;
     }, {}) : {};
 
-    if (cookies['admin_session'] === 'active') {
+    const authHeader = req.headers.authorization;
+    const customHeader = req.headers['x-admin-session'];
+    const hasToken = (authHeader === 'Bearer active') || (customHeader === 'active');
+
+    if (cookies['admin_session'] === 'active' || hasToken) {
       return next();
     }
     console.warn(`[AUTH ERROR] Unauthorized attempt to access admin-only endpoint: ${req.method} ${req.path} from IP: ${req.ip}`);
@@ -138,12 +142,12 @@ async function startServer() {
     const targetPassword = (password || '').trim();
 
     if (targetEmail === 'microcomputers@gmail.com' && targetPassword === 'computer@123') {
-      res.setHeader("Set-Cookie", "admin_session=active; Path=/; HttpOnly; SameSite=Lax");
+      res.setHeader("Set-Cookie", "admin_session=active; Path=/; HttpOnly; SameSite=None; Secure");
       console.log(`[AUTH SUCCESS] Successful login for admin: ${targetEmail}`);
-      return res.json({ success: true });
+      return res.json({ success: true, token: 'active' });
     }
     console.warn(`[AUTH ERROR] Failed login attempt for email: ${targetEmail} from IP: ${req.ip}`);
-    return res.status(401).json({ error: "Invalid Admin Credentials" });
+    return res.status(401).json({ error: "Invalid email or password." });
   });
 
   // API Route: Admin Session Status
@@ -156,8 +160,12 @@ async function startServer() {
       return acc;
     }, {}) : {};
 
+    const authHeader = req.headers.authorization;
+    const customHeader = req.headers['x-admin-session'];
+    const hasToken = (authHeader === 'Bearer active') || (customHeader === 'active');
+
     const session = cookies['admin_session'];
-    if (session === 'active') {
+    if (session === 'active' || hasToken) {
       return res.json({ loggedIn: true });
     }
     return res.json({ loggedIn: false });
@@ -165,7 +173,7 @@ async function startServer() {
 
   // API Route: Admin Logout
   app.post("/api/admin/logout", (req, res) => {
-    res.setHeader("Set-Cookie", "admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
+    res.setHeader("Set-Cookie", "admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=None; Secure");
     console.log("[AUTH LOGOUT] Admin logged out successfully");
     res.json({ success: true });
   });
@@ -328,6 +336,19 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+    
+    // Serve index.html with Vite transformation for development SPA routing fallback
+    app.use("*", async (req, res, next) => {
+      const url = req.originalUrl;
+      try {
+        let template = fs.readFileSync(path.resolve(process.cwd(), "index.html"), "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), "dist");
     
