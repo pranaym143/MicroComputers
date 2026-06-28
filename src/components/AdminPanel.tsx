@@ -92,7 +92,7 @@ export default function AdminPanel({
   // Active Tab synchronized with URL paths
   const [activeTab, setActiveTab] = useState<'analytics' | 'records' | 'add' | 'database'>(() => {
     const path = window.location.pathname;
-    if (path === '/dashboard') return 'records';
+    if (path === '/dashboard' || path === '/students') return 'records';
     if (path === '/upload') return 'add';
     return 'analytics';
   });
@@ -108,7 +108,7 @@ export default function AdminPanel({
   useEffect(() => {
     if (isLoggedIn) {
       const path = window.location.pathname;
-      if (path === '/dashboard') {
+      if (path === '/dashboard' || path === '/students') {
         setActiveTab('records');
       } else if (path === '/upload') {
         setActiveTab('add');
@@ -123,7 +123,12 @@ export default function AdminPanel({
     if (isLoggedIn) {
       let path = '/admin';
       if (activeTab === 'records') {
-        path = '/dashboard';
+        const currentPath = window.location.pathname;
+        if (currentPath === '/students') {
+          path = '/students';
+        } else {
+          path = '/dashboard';
+        }
       } else if (activeTab === 'add') {
         path = '/upload';
       } else if (activeTab === 'database') {
@@ -221,8 +226,10 @@ export default function AdminPanel({
         const data = await safeParseJson(res);
         const token = data.token || 'active';
         localStorage.setItem('admin_session', token);
+        window.history.replaceState(null, '', '/dashboard');
         setIsLoggedIn(true);
         onLoginStateChange(true);
+        setActiveTab('records');
         fetchCertificates();
       } else {
         const errData = await safeParseJson(res);

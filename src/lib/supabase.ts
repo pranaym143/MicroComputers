@@ -98,18 +98,27 @@ export async function initializeConfigAndCertificates(): Promise<void> {
 
 // Helper to get Supabase config from default environment variables or memory
 export function getSavedSupabaseConfig(): SupabaseConfig | null {
+  // Always prioritize real environment variables if set in the deployed environment
+  const metaEnv = (import.meta as any).env || {};
+  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL;
+  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (envUrl && envKey) {
+    return {
+      supabaseUrl: envUrl,
+      supabaseAnonKey: envKey,
+      storageBucket: metaEnv.VITE_STORAGE_BUCKET || 'certificates',
+      tableName: metaEnv.VITE_TABLE_NAME || 'students',
+    };
+  }
+
   if (activeConfig) {
     return activeConfig;
   }
 
-  // Use environment variables or provided credentials as default
-  const metaEnv = (import.meta as any).env || {};
-  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.NEXT_PUBLIC_SUPABASE_URL || 'https://lrhrsijdijkjqlozwfiz.supabase.co';
-  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb';
-
   return {
-    supabaseUrl: envUrl,
-    supabaseAnonKey: envKey,
+    supabaseUrl: 'https://lrhrsijdijkjqlozwfiz.supabase.co',
+    supabaseAnonKey: 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb',
     storageBucket: 'certificates',
     tableName: 'students',
   };

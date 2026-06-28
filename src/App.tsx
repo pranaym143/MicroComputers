@@ -60,10 +60,23 @@ export default function App() {
           setIsAdminOpen(true);
         }
       } else if (path === '/admin-login') {
-        setIsAdminOpen(true);
+        if (isAdminLoggedIn) {
+          // Redirect authenticated users to /dashboard
+          window.history.replaceState(null, '', '/dashboard');
+          setIsAdminOpen(true);
+        } else {
+          setIsAdminOpen(true);
+        }
+      } else if (path === '/') {
+        setIsAdminOpen(false);
       } else {
-        if (!isAdminLoggedIn) {
-          setIsAdminOpen(false);
+        // Unknown or invalid routes redirect automatically to dashboard (or admin-login if not authenticated)
+        if (isAdminLoggedIn) {
+          window.history.replaceState(null, '', '/dashboard');
+          setIsAdminOpen(true);
+        } else {
+          window.history.replaceState(null, '', '/admin-login');
+          setIsAdminOpen(true);
         }
       }
     };
@@ -81,10 +94,20 @@ export default function App() {
       if (protectedPaths.includes(path)) {
         if (!isAdminLoggedIn && path !== '/admin-login') {
           window.history.replaceState(null, '', '/admin-login');
+        } else if (isAdminLoggedIn && path === '/admin-login') {
+          window.history.replaceState(null, '', '/dashboard');
         }
         setIsAdminOpen(true);
-      } else {
+      } else if (path === '/') {
         setIsAdminOpen(false);
+      } else {
+        if (isAdminLoggedIn) {
+          window.history.replaceState(null, '', '/dashboard');
+          setIsAdminOpen(true);
+        } else {
+          window.history.replaceState(null, '', '/admin-login');
+          setIsAdminOpen(true);
+        }
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -204,17 +227,7 @@ export default function App() {
         <AdminPanel
           onClose={() => {
             setIsAdminOpen(false);
-            setIsAdminLoggedIn(false);
             window.history.pushState(null, '', '/');
-            const token = localStorage.getItem('admin_session') || '';
-            fetch('/api/admin/logout', { 
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'X-Admin-Session': token
-              }
-            }).catch(() => {});
-            localStorage.removeItem('admin_session');
           }}
           onLoginStateChange={(isLoggedIn) => setIsAdminLoggedIn(isLoggedIn)}
           onSupabaseStateChange={(isConnected) => setIsSupabaseConnected(isConnected)}

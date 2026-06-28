@@ -48,6 +48,20 @@ const CERTS_FILE_PATH = path.join(process.cwd(), "certificates-db.json");
 
 // Helper to load Supabase Config
 function loadSupabaseConfig() {
+  // Always prioritize real environment variables if set in the deployed environment
+  const envUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const envKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (envUrl && envKey) {
+    console.log("[CONFIG] Prioritizing production environment variables for Supabase connection.");
+    return {
+      supabaseUrl: envUrl,
+      supabaseAnonKey: envKey,
+      storageBucket: process.env.VITE_STORAGE_BUCKET || 'certificates',
+      tableName: process.env.VITE_TABLE_NAME || 'students',
+    };
+  }
+
   try {
     if (fs.existsSync(CONFIG_FILE_PATH)) {
       const content = fs.readFileSync(CONFIG_FILE_PATH, "utf-8");
@@ -57,13 +71,10 @@ function loadSupabaseConfig() {
     console.error("Error reading Supabase config file:", e);
   }
 
-  // Fallback to Env variables or hardcoded default
-  const envUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://lrhrsijdijkjqlozwfiz.supabase.co';
-  const envKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb';
-
+  // Fallback to hardcoded default
   return {
-    supabaseUrl: envUrl,
-    supabaseAnonKey: envKey,
+    supabaseUrl: 'https://lrhrsijdijkjqlozwfiz.supabase.co',
+    supabaseAnonKey: 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb',
     storageBucket: 'certificates',
     tableName: 'students',
   };
@@ -473,8 +484,12 @@ async function startServer() {
   // Serve static uploaded certificates
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-  // Vite integration middleware
-  if (process.env.NODE_ENV !== "production") {
+  // Vite integration middleware or high-performance production static hosting fallback
+  const distPath = path.join(process.cwd(), "dist");
+  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(distPath, "index.html"));
+
+  if (!isProd) {
+    console.log("[SERVER] Starting Vite development integration middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -494,7 +509,7 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    console.log("[SERVER] Hosting production static assets from:", distPath);
     
     // Serve static files, but prevent caching of index.html so users always get the latest version
     app.use(express.static(distPath, {
