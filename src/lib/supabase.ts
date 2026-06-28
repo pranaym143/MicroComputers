@@ -96,7 +96,7 @@ export async function initializeConfigAndCertificates(): Promise<void> {
   }
 }
 
-// Helper to get Supabase config from default environment variables or memory
+// Helper to get Supabase config from default environment variables, memory, or local storage
 export function getSavedSupabaseConfig(): SupabaseConfig | null {
   // Always prioritize real environment variables if set in the deployed environment
   const metaEnv = (import.meta as any).env || {};
@@ -116,6 +116,20 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
     return activeConfig;
   }
 
+  // Fallback to localStorage for instant local configuration recovery
+  try {
+    const cached = localStorage.getItem('supabase_config');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed.supabaseUrl && parsed.supabaseAnonKey) {
+        activeConfig = parsed;
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load Supabase config from local storage:', e);
+  }
+
   return {
     supabaseUrl: 'https://lrhrsijdijkjqlozwfiz.supabase.co',
     supabaseAnonKey: 'sb_publishable_frDxl4Ijnvf9RMfJ6sjEBg_pGpDJmeb',
@@ -128,6 +142,12 @@ export function getSavedSupabaseConfig(): SupabaseConfig | null {
 export function saveSupabaseConfig(config: SupabaseConfig): void {
   activeConfig = config;
   supabaseClient = null;
+
+  try {
+    localStorage.setItem('supabase_config', JSON.stringify(config));
+  } catch (e) {
+    console.warn('Failed to cache Supabase config in local storage:', e);
+  }
 
   const token = localStorage.getItem('admin_session') || '';
   // Send config updates asynchronously to backend to share with all clients
@@ -148,6 +168,12 @@ export function saveSupabaseConfig(config: SupabaseConfig): void {
 export function clearSupabaseConfig(): void {
   activeConfig = null;
   supabaseClient = null;
+
+  try {
+    localStorage.removeItem('supabase_config');
+  } catch (e) {
+    console.warn('Failed to clear Supabase config from local storage:', e);
+  }
 
   const token = localStorage.getItem('admin_session') || '';
   // Remove config from backend server
@@ -639,43 +665,51 @@ export class CertificateService {
   }
 }
 
+// Extract storage details (bucketName and filePath) from any Supabase storage URL dynamically
+export function getStorageDetails(url: string, defaultBucket: string): { bucketName: string; filePath: string } {
+  try {
+    const decodedUrl = decodeURIComponent(url);
+    if (decodedUrl.startsWith('http://') || decodedUrl.startsWith('https://')) {
+      const parsed = new URL(decodedUrl);
+      const pathname = parsed.pathname;
+      const objectIndex = pathname.indexOf('/object/');
+      if (objectIndex !== -1) {
+        const remaining = pathname.substring(objectIndex + 8);
+        const parts = remaining.split('/');
+        if (parts.length >= 3) {
+          const bucketName = parts[1];
+          let filePath = parts.slice(2).join('/');
+          const qIndex = filePath.indexOf('?');
+          if (qIndex !== -1) {
+            filePath = filePath.substring(0, qIndex);
+          }
+          const hIndex = filePath.indexOf('#');
+          if (hIndex !== -1) {
+            filePath = filePath.substring(0, hIndex);
+          }
+          return { bucketName, filePath };
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Error parsing Supabase URL dynamically:", e);
+  }
+
+  // Fallback
+  let filePath = url;
+  const qIndex = filePath.indexOf('?');
+  if (qIndex !== -1) {
+    filePath = filePath.substring(0, qIndex);
+  }
+  const hIndex = filePath.indexOf('#');
+  if (hIndex !== -1) {
+    filePath = filePath.substring(0, hIndex);
+  }
+  return { bucketName: defaultBucket, filePath };
+}
+
 // Extract file path inside the bucket from any Supabase storage URL
 export function getStoragePathFromUrl(url: string, bucketName: string): string | null {
   if (!url) return null;
-  try {
-    const decodedUrl = decodeURIComponent(url);
-    const bucketMarker = `/${bucketName}/`;
-    const markerIndex = decodedUrl.indexOf(bucketMarker);
-    let pathResult: string | null = null;
-
-    if (markerIndex !== -1) {
-      pathResult = decodedUrl.substring(markerIndex + bucketMarker.length);
-    } else if (url.startsWith('http://') || url.startsWith('https://')) {
-      const parsed = new URL(url);
-      const pathParts = parsed.pathname.split('/');
-      const bIndex = pathParts.indexOf(bucketName);
-      if (bIndex !== -1 && bIndex < pathParts.length - 1) {
-        pathResult = pathParts.slice(bIndex + 1).join('/');
-      }
-    } else if (!url.startsWith('http')) {
-      pathResult = url;
-    }
-
-    if (pathResult) {
-      // Strip query parameters
-      const qIndex = pathResult.indexOf('?');
-      if (qIndex !== -1) {
-        pathResult = pathResult.substring(0, qIndex);
-      }
-      // Strip hash fragments
-      const hIndex = pathResult.indexOf('#');
-      if (hIndex !== -1) {
-        pathResult = pathResult.substring(0, hIndex);
-      }
-      return pathResult;
-    }
-  } catch (e) {
-    console.error('Error parsing storage path from URL:', e);
-  }
-  return null;
+  return getStorageDetails(url, bucketName).filePath;
 }

@@ -56,7 +56,7 @@ export default function AdminPanel({
   const [inputUrl, setInputUrl] = useState(supabaseConfig?.supabaseUrl || '');
   const [inputKey, setInputKey] = useState(supabaseConfig?.supabaseAnonKey || '');
   const [inputBucket, setInputBucket] = useState(supabaseConfig?.storageBucket || '');
-  const [inputTable, setInputTable] = useState(supabaseConfig?.tableName || 'certificates');
+  const [inputTable, setInputTable] = useState(supabaseConfig?.tableName || 'students');
   const [configSuccess, setConfigSuccess] = useState('');
 
   // Certificates Database State
@@ -164,6 +164,28 @@ export default function AdminPanel({
           if (data.loggedIn) {
             setIsLoggedIn(true);
             onLoginStateChange(true);
+
+            // Auto-heal/sync configuration back to stateless backend server if cached locally
+            const cachedConfig = localStorage.getItem('supabase_config');
+            if (cachedConfig) {
+              try {
+                const parsed = JSON.parse(cachedConfig);
+                if (parsed.supabaseUrl && parsed.supabaseAnonKey) {
+                  await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`,
+                      'X-Admin-Session': token
+                    },
+                    body: JSON.stringify(parsed),
+                  });
+                }
+              } catch (e) {
+                console.error('Failed to auto-sync cached configuration to backend:', e);
+              }
+            }
+
             fetchCertificates();
           } else {
             setIsLoggedIn(false);
@@ -299,7 +321,7 @@ export default function AdminPanel({
     setInputUrl('');
     setInputKey('');
     setInputBucket('');
-    setInputTable('certificates');
+    setInputTable('students');
     onSupabaseStateChange(false);
     setConfigSuccess('Returned to local simulation mode successfully.');
     fetchCertificates();

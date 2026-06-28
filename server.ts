@@ -111,45 +111,53 @@ function saveLocalCertificates(certs: any[]) {
   }
 }
 
+// Extract storage details (bucketName and filePath) from any Supabase storage URL dynamically
+function getStorageDetails(url: string, defaultBucket: string): { bucketName: string; filePath: string } {
+  try {
+    const decodedUrl = decodeURIComponent(url);
+    if (decodedUrl.startsWith('http://') || decodedUrl.startsWith('https://')) {
+      const parsed = new URL(decodedUrl);
+      const pathname = parsed.pathname;
+      const objectIndex = pathname.indexOf('/object/');
+      if (objectIndex !== -1) {
+        const remaining = pathname.substring(objectIndex + 8);
+        const parts = remaining.split('/');
+        if (parts.length >= 3) {
+          const bucketName = parts[1];
+          let filePath = parts.slice(2).join('/');
+          const qIndex = filePath.indexOf('?');
+          if (qIndex !== -1) {
+            filePath = filePath.substring(0, qIndex);
+          }
+          const hIndex = filePath.indexOf('#');
+          if (hIndex !== -1) {
+            filePath = filePath.substring(0, hIndex);
+          }
+          return { bucketName, filePath };
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Error parsing Supabase URL dynamically:", e);
+  }
+
+  // Fallback
+  let filePath = url;
+  const qIndex = filePath.indexOf('?');
+  if (qIndex !== -1) {
+    filePath = filePath.substring(0, qIndex);
+  }
+  const hIndex = filePath.indexOf('#');
+  if (hIndex !== -1) {
+    filePath = filePath.substring(0, hIndex);
+  }
+  return { bucketName: defaultBucket, filePath };
+}
+
 // Extract file path inside the bucket from any Supabase storage URL
 function getStoragePathFromUrl(url: string, bucketName: string): string | null {
   if (!url) return null;
-  try {
-    const decodedUrl = decodeURIComponent(url);
-    const bucketMarker = `/${bucketName}/`;
-    const markerIndex = decodedUrl.indexOf(bucketMarker);
-    let pathResult: string | null = null;
-
-    if (markerIndex !== -1) {
-      pathResult = decodedUrl.substring(markerIndex + bucketMarker.length);
-    } else if (url.startsWith('http://') || url.startsWith('https://')) {
-      const parsed = new URL(url);
-      const pathParts = parsed.pathname.split('/');
-      const bIndex = pathParts.indexOf(bucketName);
-      if (bIndex !== -1 && bIndex < pathParts.length - 1) {
-        pathResult = pathParts.slice(bIndex + 1).join('/');
-      }
-    } else if (!url.startsWith('http')) {
-      pathResult = url;
-    }
-
-    if (pathResult) {
-      // Strip query parameters
-      const qIndex = pathResult.indexOf('?');
-      if (qIndex !== -1) {
-        pathResult = pathResult.substring(0, qIndex);
-      }
-      // Strip hash fragments
-      const hIndex = pathResult.indexOf('#');
-      if (hIndex !== -1) {
-        pathResult = pathResult.substring(0, hIndex);
-      }
-      return pathResult;
-    }
-  } catch (e) {
-    console.error('Error parsing storage path from URL:', e);
-  }
-  return null;
+  return getStorageDetails(url, bucketName).filePath;
 }
 
 async function startServer() {
@@ -247,7 +255,7 @@ async function startServer() {
       supabaseUrl: config.supabaseUrl,
       supabaseAnonKey: config.supabaseAnonKey,
       storageBucket: config.storageBucket || 'certificates',
-      tableName: config.tableName || 'certificates',
+      tableName: config.tableName || 'students',
     };
     saveSupabaseConfig(newConfig);
     console.log("[API SUCCESS] Supabase configuration updated successfully");
@@ -401,19 +409,22 @@ async function startServer() {
       const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
       const bucketName = config.storageBucket || 'certificates';
 
-      // Parse/clean the storage path
-      const filePath = getStoragePathFromUrl(fileUrl, bucketName);
+      // Parse/clean the storage path and dynamic bucket name
+      const storageDetails = getStorageDetails(fileUrl, bucketName);
+      const filePath = storageDetails.filePath;
+      const finalBucketName = storageDetails.bucketName;
+
       if (!filePath) {
         console.error(`[DOWNLOAD ERROR] Invalid URL structure or empty path: "${fileUrl}"`);
         return res.status(400).json({ error: "Certificate not found." });
       }
 
-      console.log(`[DOWNLOAD] Extracted storage path: "${filePath}" inside bucket: "${bucketName}"`);
+      console.log(`[DOWNLOAD] Extracted storage path: "${filePath}" inside bucket: "${finalBucketName}"`);
 
       // 1. Generate a valid signed URL first
       console.log(`[DOWNLOAD] Generating a valid signed URL for path: ${filePath}`);
       const { data: signedData, error: signedError } = await supabase.storage
-        .from(bucketName)
+        .from(finalBucketName)
         .createSignedUrl(filePath, 3600); // 1 hour validity
 
       if (signedError || !signedData || !signedData.signedUrl) {
@@ -424,29 +435,27 @@ async function startServer() {
       const freshSignedUrl = signedData.signedUrl;
       console.log(`[DOWNLOAD] Successfully generated fresh signed URL: ${freshSignedUrl}`);
 
-      // 2. Verify file exists by sending a quick HEAD request to the pre-authenticated signed URL
-      console.log(`[DOWNLOAD] Verifying file existence via HEAD check on signed URL...`);
-      const checkRes = await fetch(freshSignedUrl, { method: "HEAD" });
-      if (!checkRes.ok) {
-        console.error(`[DOWNLOAD ERROR] File does not exist at signed URL. Status: ${checkRes.status}`);
+      // 2. Fetch the file using the signed URL (single GET request, handles both check and stream perfectly)
+      console.log(`[DOWNLOAD] Fetching file stream from pre-authenticated signed URL...`);
+      const fileRes = await fetch(freshSignedUrl);
+      
+      if (!fileRes.ok) {
+        console.error(`[DOWNLOAD ERROR] Failed to fetch file from signed URL. Status: ${fileRes.status}`);
         return res.status(404).json({ error: "Certificate not found." });
       }
 
       // If it's a pre-check query, return success response now
       if (isCheckOnly) {
         console.log(`[DOWNLOAD SUCCESS] Pre-check passed for path: ${filePath}`);
+        if (fileRes.body) {
+          try {
+            await fileRes.body.cancel();
+          } catch (e) {}
+        }
         return res.json({ success: true, verified: true });
       }
 
-      // 3. Download the file using the signed URL fetch stream (handles authentication perfectly and bypasses RLS)
-      console.log(`[DOWNLOAD] Fetching file stream from pre-authenticated signed URL...`);
-      const fileRes = await fetch(freshSignedUrl);
-      if (!fileRes.ok) {
-        console.error(`[DOWNLOAD ERROR] Failed to stream file from signed URL. Status: ${fileRes.status}`);
-        return res.status(500).json({ error: "Certificate download failed." });
-      }
-
-      // 4. Stream response back to client (with appropriate content disposition)
+      // 3. Stream response back to client (with appropriate content disposition)
       const contentType = fileRes.headers.get("content-type") || "application/pdf";
       const buffer = Buffer.from(await fileRes.arrayBuffer());
 
