@@ -129,10 +129,15 @@ export function saveSupabaseConfig(config: SupabaseConfig): void {
   activeConfig = config;
   supabaseClient = null;
 
+  const token = localStorage.getItem('admin_session') || '';
   // Send config updates asynchronously to backend to share with all clients
   fetch('/api/config', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'X-Admin-Session': token
+    },
     body: JSON.stringify(config),
   }).catch(err => {
     console.error('Failed to sync config to backend server:', err);
@@ -144,9 +149,14 @@ export function clearSupabaseConfig(): void {
   activeConfig = null;
   supabaseClient = null;
 
+  const token = localStorage.getItem('admin_session') || '';
   // Remove config from backend server
   fetch('/api/config', {
     method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'X-Admin-Session': token
+    }
   }).catch(err => {
     console.error('Failed to clear config on backend server:', err);
   });
@@ -636,23 +646,33 @@ export function getStoragePathFromUrl(url: string, bucketName: string): string |
     const decodedUrl = decodeURIComponent(url);
     const bucketMarker = `/${bucketName}/`;
     const markerIndex = decodedUrl.indexOf(bucketMarker);
+    let pathResult: string | null = null;
+
     if (markerIndex !== -1) {
-      return decodedUrl.substring(markerIndex + bucketMarker.length);
-    }
-    
-    // If it's a URL but doesn't have the bucket marker, try parsing the pathname
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+      pathResult = decodedUrl.substring(markerIndex + bucketMarker.length);
+    } else if (url.startsWith('http://') || url.startsWith('https://')) {
       const parsed = new URL(url);
       const pathParts = parsed.pathname.split('/');
       const bIndex = pathParts.indexOf(bucketName);
       if (bIndex !== -1 && bIndex < pathParts.length - 1) {
-        return pathParts.slice(bIndex + 1).join('/');
+        pathResult = pathParts.slice(bIndex + 1).join('/');
       }
+    } else if (!url.startsWith('http')) {
+      pathResult = url;
     }
-    
-    // Fallback if URL is just a file name
-    if (!url.startsWith('http')) {
-      return url;
+
+    if (pathResult) {
+      // Strip query parameters
+      const qIndex = pathResult.indexOf('?');
+      if (qIndex !== -1) {
+        pathResult = pathResult.substring(0, qIndex);
+      }
+      // Strip hash fragments
+      const hIndex = pathResult.indexOf('#');
+      if (hIndex !== -1) {
+        pathResult = pathResult.substring(0, hIndex);
+      }
+      return pathResult;
     }
   } catch (e) {
     console.error('Error parsing storage path from URL:', e);

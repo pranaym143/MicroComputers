@@ -118,26 +118,33 @@ function getStoragePathFromUrl(url: string, bucketName: string): string | null {
     const decodedUrl = decodeURIComponent(url);
     const bucketMarker = `/${bucketName}/`;
     const markerIndex = decodedUrl.indexOf(bucketMarker);
+    let pathResult: string | null = null;
+
     if (markerIndex !== -1) {
-      const pathWithQuery = decodedUrl.substring(markerIndex + bucketMarker.length);
-      const questionMarkIndex = pathWithQuery.indexOf('?');
-      if (questionMarkIndex !== -1) {
-        return pathWithQuery.substring(0, questionMarkIndex);
-      }
-      return pathWithQuery;
-    }
-    
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+      pathResult = decodedUrl.substring(markerIndex + bucketMarker.length);
+    } else if (url.startsWith('http://') || url.startsWith('https://')) {
       const parsed = new URL(url);
       const pathParts = parsed.pathname.split('/');
       const bIndex = pathParts.indexOf(bucketName);
       if (bIndex !== -1 && bIndex < pathParts.length - 1) {
-        return pathParts.slice(bIndex + 1).join('/');
+        pathResult = pathParts.slice(bIndex + 1).join('/');
       }
+    } else if (!url.startsWith('http')) {
+      pathResult = url;
     }
-    
-    if (!url.startsWith('http')) {
-      return url;
+
+    if (pathResult) {
+      // Strip query parameters
+      const qIndex = pathResult.indexOf('?');
+      if (qIndex !== -1) {
+        pathResult = pathResult.substring(0, qIndex);
+      }
+      // Strip hash fragments
+      const hIndex = pathResult.indexOf('#');
+      if (hIndex !== -1) {
+        pathResult = pathResult.substring(0, hIndex);
+      }
+      return pathResult;
     }
   } catch (e) {
     console.error('Error parsing storage path from URL:', e);
@@ -403,50 +410,27 @@ async function startServer() {
 
       console.log(`[DOWNLOAD] Extracted storage path: "${filePath}" inside bucket: "${bucketName}"`);
 
-      // 1. Verify that the file exists in the Supabase "certificates" bucket
-      console.log(`[DOWNLOAD] Verifying file exists in storage bucket...`);
-      const { data: fileList, error: listError } = await supabase.storage
-        .from(bucketName)
-        .list('', { search: filePath });
-
-      if (listError) {
-        console.warn(`[DOWNLOAD WARNING] List error (falling back to direct fetch verification):`, listError.message);
-      }
-
-      let exists = false;
-      if (fileList && fileList.some(f => f.name === filePath)) {
-        exists = true;
-      } else {
-        // Fallback check: attempt a standard metadata download call to verify if file exists
-        const { data: testDownload, error: testError } = await supabase.storage
-          .from(bucketName)
-          .download(filePath);
-        
-        if (!testError && testDownload) {
-          exists = true;
-        } else {
-          console.error(`[DOWNLOAD ERROR] File verification failed for path "${filePath}":`, testError?.message || 'File not found in storage');
-        }
-      }
-
-      if (!exists) {
-        console.error(`[DOWNLOAD ERROR] Missing file. File not found in bucket "${bucketName}" for path: "${filePath}"`);
-        return res.status(404).json({ error: "Certificate not found." });
-      }
-
-      // 2. Generate a valid signed URL (this satisfies refreshing expired URLs automatically by creating a fresh token)
+      // 1. Generate a valid signed URL first
       console.log(`[DOWNLOAD] Generating a valid signed URL for path: ${filePath}`);
       const { data: signedData, error: signedError } = await supabase.storage
         .from(bucketName)
         .createSignedUrl(filePath, 3600); // 1 hour validity
 
       if (signedError || !signedData || !signedData.signedUrl) {
-        console.error(`[DOWNLOAD ERROR] Signed URL generation failed or expired:`, signedError?.message);
-        return res.status(500).json({ error: "Certificate download failed." });
+        console.error(`[DOWNLOAD ERROR] Signed URL generation failed:`, signedError?.message);
+        return res.status(404).json({ error: "Certificate not found." });
       }
 
       const freshSignedUrl = signedData.signedUrl;
       console.log(`[DOWNLOAD] Successfully generated fresh signed URL: ${freshSignedUrl}`);
+
+      // 2. Verify file exists by sending a quick HEAD request to the pre-authenticated signed URL
+      console.log(`[DOWNLOAD] Verifying file existence via HEAD check on signed URL...`);
+      const checkRes = await fetch(freshSignedUrl, { method: "HEAD" });
+      if (!checkRes.ok) {
+        console.error(`[DOWNLOAD ERROR] File does not exist at signed URL. Status: ${checkRes.status}`);
+        return res.status(404).json({ error: "Certificate not found." });
+      }
 
       // If it's a pre-check query, return success response now
       if (isCheckOnly) {
@@ -454,20 +438,17 @@ async function startServer() {
         return res.json({ success: true, verified: true });
       }
 
-      // 3. Download the file using Supabase Storage API download method (as requested)
-      console.log(`[DOWNLOAD] Fetching file stream from Supabase Storage API...`);
-      const { data: blob, error: downloadError } = await supabase.storage
-        .from(bucketName)
-        .download(filePath);
-
-      if (downloadError || !blob) {
-        console.error(`[DOWNLOAD ERROR] Supabase Storage API download method failed:`, downloadError?.message);
+      // 3. Download the file using the signed URL fetch stream (handles authentication perfectly and bypasses RLS)
+      console.log(`[DOWNLOAD] Fetching file stream from pre-authenticated signed URL...`);
+      const fileRes = await fetch(freshSignedUrl);
+      if (!fileRes.ok) {
+        console.error(`[DOWNLOAD ERROR] Failed to stream file from signed URL. Status: ${fileRes.status}`);
         return res.status(500).json({ error: "Certificate download failed." });
       }
 
       // 4. Stream response back to client (with appropriate content disposition)
-      const contentType = blob.type || "application/pdf";
-      const buffer = Buffer.from(await blob.arrayBuffer());
+      const contentType = fileRes.headers.get("content-type") || "application/pdf";
+      const buffer = Buffer.from(await fileRes.arrayBuffer());
 
       console.log(`[DOWNLOAD SUCCESS] Streaming ${buffer.length} bytes. Filename: ${fileName}, Content-Type: ${contentType}`);
       res.setHeader("Content-Type", contentType);
