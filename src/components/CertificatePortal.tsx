@@ -59,16 +59,24 @@ export default function CertificatePortal() {
     setDownloading(true);
     setDownloadError('');
     try {
-      console.log('Verifying and fetching certificate file from Supabase storage...', url);
-      const { blob, signedUrl, fileName: serverFileName } = await CertificateService.downloadCertificateFile(url);
+      console.log('Verifying certificate availability in Supabase and generating a valid signed URL...', url);
+      const cleanFileName = fileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
       
-      const cleanFileName = fileName || serverFileName || `certificate-${certificate?.hall_ticket_number || 'download'}.pdf`;
-      console.log('Initiating secure proxy download to bypass browser restrictions and force saving...');
-      const proxyUrl = `/api/download-proxy?url=${encodeURIComponent(signedUrl)}&filename=${encodeURIComponent(cleanFileName)}`;
+      // 1. Perform a secure pre-check via backend server to confirm the file exists and can be signed
+      const checkUrl = `/api/download-certificate?url=${encodeURIComponent(url)}&check=true`;
+      const checkResponse = await fetch(checkUrl);
+      if (!checkResponse.ok) {
+        const errorData = await checkResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Certificate not found.');
+      }
+
+      console.log('Certificate verified successfully in Supabase. Streaming file download natively...');
       
+      // 2. Trigger native download from the secure streaming endpoint (working on all devices & browsers)
+      const downloadUrl = `/api/download-certificate?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(cleanFileName)}`;
       const link = document.createElement('a');
-      link.href = proxyUrl;
-      link.download = cleanFileName;
+      link.href = downloadUrl;
+      link.setAttribute('download', cleanFileName);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

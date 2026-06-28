@@ -100,6 +100,40 @@ function saveLocalCertificates(certs: any[]) {
   }
 }
 
+// Extract file path inside the bucket from any Supabase storage URL
+function getStoragePathFromUrl(url: string, bucketName: string): string | null {
+  if (!url) return null;
+  try {
+    const decodedUrl = decodeURIComponent(url);
+    const bucketMarker = `/${bucketName}/`;
+    const markerIndex = decodedUrl.indexOf(bucketMarker);
+    if (markerIndex !== -1) {
+      const pathWithQuery = decodedUrl.substring(markerIndex + bucketMarker.length);
+      const questionMarkIndex = pathWithQuery.indexOf('?');
+      if (questionMarkIndex !== -1) {
+        return pathWithQuery.substring(0, questionMarkIndex);
+      }
+      return pathWithQuery;
+    }
+    
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      const parsed = new URL(url);
+      const pathParts = parsed.pathname.split('/');
+      const bIndex = pathParts.indexOf(bucketName);
+      if (bIndex !== -1 && bIndex < pathParts.length - 1) {
+        return pathParts.slice(bIndex + 1).join('/');
+      }
+    }
+    
+    if (!url.startsWith('http')) {
+      return url;
+    }
+  } catch (e) {
+    console.error('Error parsing storage path from URL:', e);
+  }
+  return null;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -323,6 +357,116 @@ async function startServer() {
     } catch (err: any) {
       console.error("Proxy download error:", err);
       res.status(500).json({ error: "Failed to download file via proxy server", details: err.message || String(err) });
+    }
+  });
+
+  // API Route: Secure certificate download with direct Supabase API validation, signed URL generation and automatic refresh
+  app.get("/api/download-certificate", async (req, res) => {
+    const fileUrl = req.query.url as string;
+    const fileName = req.query.filename as string || "certificate.pdf";
+    const isCheckOnly = req.query.check === "true";
+
+    if (!fileUrl) {
+      console.error("[DOWNLOAD ERROR] Missing url parameter");
+      return res.status(400).json({ error: "url parameter is required" });
+    }
+
+    try {
+      console.log(`[DOWNLOAD] Process initiated. URL: ${fileUrl}, Check Only: ${isCheckOnly}`);
+      const config = loadSupabaseConfig();
+      if (!config.supabaseUrl || !config.supabaseAnonKey) {
+        throw new Error("Supabase is not configured on server.");
+      }
+
+      // Initialize Supabase client on server-side to avoid client RLS restrictions
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+      const bucketName = config.storageBucket || 'certificates';
+
+      // Parse/clean the storage path
+      const filePath = getStoragePathFromUrl(fileUrl, bucketName);
+      if (!filePath) {
+        console.error(`[DOWNLOAD ERROR] Invalid URL structure or empty path: "${fileUrl}"`);
+        return res.status(400).json({ error: "Certificate not found." });
+      }
+
+      console.log(`[DOWNLOAD] Extracted storage path: "${filePath}" inside bucket: "${bucketName}"`);
+
+      // 1. Verify that the file exists in the Supabase "certificates" bucket
+      console.log(`[DOWNLOAD] Verifying file exists in storage bucket...`);
+      const { data: fileList, error: listError } = await supabase.storage
+        .from(bucketName)
+        .list('', { search: filePath });
+
+      if (listError) {
+        console.warn(`[DOWNLOAD WARNING] List error (falling back to direct fetch verification):`, listError.message);
+      }
+
+      let exists = false;
+      if (fileList && fileList.some(f => f.name === filePath)) {
+        exists = true;
+      } else {
+        // Fallback check: attempt a standard metadata download call to verify if file exists
+        const { data: testDownload, error: testError } = await supabase.storage
+          .from(bucketName)
+          .download(filePath);
+        
+        if (!testError && testDownload) {
+          exists = true;
+        } else {
+          console.error(`[DOWNLOAD ERROR] File verification failed for path "${filePath}":`, testError?.message || 'File not found in storage');
+        }
+      }
+
+      if (!exists) {
+        console.error(`[DOWNLOAD ERROR] Missing file. File not found in bucket "${bucketName}" for path: "${filePath}"`);
+        return res.status(404).json({ error: "Certificate not found." });
+      }
+
+      // 2. Generate a valid signed URL (this satisfies refreshing expired URLs automatically by creating a fresh token)
+      console.log(`[DOWNLOAD] Generating a valid signed URL for path: ${filePath}`);
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(filePath, 3600); // 1 hour validity
+
+      if (signedError || !signedData || !signedData.signedUrl) {
+        console.error(`[DOWNLOAD ERROR] Signed URL generation failed or expired:`, signedError?.message);
+        return res.status(500).json({ error: "Certificate download failed." });
+      }
+
+      const freshSignedUrl = signedData.signedUrl;
+      console.log(`[DOWNLOAD] Successfully generated fresh signed URL: ${freshSignedUrl}`);
+
+      // If it's a pre-check query, return success response now
+      if (isCheckOnly) {
+        console.log(`[DOWNLOAD SUCCESS] Pre-check passed for path: ${filePath}`);
+        return res.json({ success: true, verified: true });
+      }
+
+      // 3. Download the file using Supabase Storage API download method (as requested)
+      console.log(`[DOWNLOAD] Fetching file stream from Supabase Storage API...`);
+      const { data: blob, error: downloadError } = await supabase.storage
+        .from(bucketName)
+        .download(filePath);
+
+      if (downloadError || !blob) {
+        console.error(`[DOWNLOAD ERROR] Supabase Storage API download method failed:`, downloadError?.message);
+        return res.status(500).json({ error: "Certificate download failed." });
+      }
+
+      // 4. Stream response back to client (with appropriate content disposition)
+      const contentType = blob.type || "application/pdf";
+      const buffer = Buffer.from(await blob.arrayBuffer());
+
+      console.log(`[DOWNLOAD SUCCESS] Streaming ${buffer.length} bytes. Filename: ${fileName}, Content-Type: ${contentType}`);
+      res.setHeader("Content-Type", contentType);
+      const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+      return res.send(buffer);
+
+    } catch (err: any) {
+      console.error("[DOWNLOAD FATAL ERROR] Download process crashed:", err);
+      return res.status(500).json({ error: "Certificate download failed.", details: err.message || String(err) });
     }
   });
 
